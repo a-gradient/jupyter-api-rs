@@ -576,10 +576,10 @@ impl Segment {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
   use super::*;
 
-  fn _setup_client() -> JupyterRestClient {
+  pub(crate) fn _setup_client() -> JupyterRestClient {
     RestClientBuilder::new("http://localhost:8888").unwrap()
       .auto_token(include_str!("../../.secret").trim()).unwrap()
       .build().unwrap()

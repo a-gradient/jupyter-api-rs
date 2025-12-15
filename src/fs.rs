@@ -103,6 +103,37 @@ impl FsService {
       .map_err(FsError::from)?;
     Ok(())
   }
+
+  /// Create a directory at the provided fully-qualified Jupyter path.
+  pub async fn mkdir(&self, path: &str) -> Result<Entry, FsError> {
+    let mut model = SaveContentsModel::default();
+    model.entry_type = Some(ContentsEntryType::Directory);
+    let contents = self
+      .inner
+      .save_contents(path, &model)
+      .await
+      .map_err(FsError::from)?;
+    Ok(Entry::from(contents))
+  }
+
+  /// Remove a directory after verifying the target is not a plain file.
+  pub async fn rmdir(&self, path: &str) -> Result<(), FsError> {
+    let mut params = ContentsGetParams::default();
+    params.content = Some(false);
+    let metadata = self
+      .inner
+      .get_contents(path, Some(&params))
+      .await
+      .map_err(FsError::from)?;
+    if !EntryKind::from_content_type(&metadata.content_type).is_directory() {
+      return Err(FsError::NotADirectory(metadata.path));
+    }
+    self
+      .inner
+      .delete_contents(path)
+      .await
+      .map_err(FsError::from)
+  }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -186,7 +217,9 @@ pub struct FileDownload {
 fn decode_file_bytes(format: Option<&str>, payload: ContentValue) -> Result<Vec<u8>, FsError> {
   match payload {
     ContentValue::Text(data) => match format.unwrap_or("text") {
-      "base64" => STANDARD.decode(data).map_err(FsError::from),
+      "base64" => {
+        STANDARD.decode(data.trim()).map_err(FsError::from)
+      },
       _ => Ok(data.into_bytes()),
     },
     ContentValue::Contents(_) => Err(FsError::InvalidPayload(
@@ -199,6 +232,7 @@ fn decode_file_bytes(format: Option<&str>, payload: ContentValue) -> Result<Vec<
 pub enum FsError {
   Rest(RestError),
   NotAFile(String),
+  NotADirectory(String),
   MissingContent(String),
   InvalidPayload(String),
   Decode(base64::DecodeError),
@@ -209,6 +243,7 @@ impl fmt::Display for FsError {
     match self {
       FsError::Rest(err) => write!(f, "rest api error: {err}"),
       FsError::NotAFile(path) => write!(f, "{path} is not a file"),
+      FsError::NotADirectory(path) => write!(f, "{path} is not a directory"),
       FsError::MissingContent(path) => write!(f, "no content returned for {path}"),
       FsError::InvalidPayload(reason) => write!(f, "invalid payload: {reason}"),
       FsError::Decode(err) => write!(f, "failed to decode file payload: {err}"),
@@ -279,11 +314,31 @@ mod tests {
     let encoded = STANDARD.encode("payload");
     let bytes = decode_file_bytes(Some("base64"), ContentValue::Text(encoded)).unwrap();
     assert_eq!(bytes, b"payload");
+    let bytes = decode_file_bytes(Some("base64"), ContentValue::Text("MTIz".into())).unwrap();
+    assert_eq!(bytes, b"123");
   }
 
   #[test]
   fn decode_text_payload_to_bytes() {
     let bytes = decode_file_bytes(Some("text"), ContentValue::Text("hello".into())).unwrap();
     assert_eq!(bytes, b"hello");
+  }
+
+  #[tokio::test]
+  async fn test_ls_directory() {
+    let client = crate::api::client::tests::_setup_client();
+    let fs = FsService::new(Arc::new(client));
+    let result = fs.ls("/").await.unwrap();
+    println!("Directory listing: {:?}", result.iter().map(|e| &e.name).collect::<Vec<_>>());
+    let entry = fs.upload("1.txt", "123").await.unwrap();
+    println!("Uploaded entry: {:?}", entry);
+    let download = fs.download("1.txt").await.unwrap();
+    println!("Downloaded entry: {:?}", download);
+    let entries2 = fs.ls("/").await.unwrap();
+    assert_eq!(entries2.len(), result.len() + 1);
+    assert!(entries2.iter().any(|e| e.name == "1.txt"));
+    fs.rm("1.txt").await.unwrap();
+    let entries2 = fs.ls("/").await.unwrap();
+    assert_eq!(entries2.len(), result.len());
   }
 }
