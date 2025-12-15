@@ -1,0 +1,19 @@
+{
+  "identity": {
+    "username": "faec3652159f495483270bb34cca92e6",
+    "name": "Anonymous Aitne",
+    "display_name": "Anonymous Aitne",
+    "initials": "AA",
+    "avatar_url": null,
+    "color": null
+  },
+  "permissions": {
+    "updatable_fields": [
+      "name",
+      "display_name",
+      "initials",
+      "avatar_url",
+      "color"
+    ]
+  }
+}

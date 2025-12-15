@@ -191,4 +191,18 @@ mod tests {
     let sessions: Vec<Session> = serde_json::from_str(json_data).unwrap();
     println!("{:#?}", sessions);
   }
+
+  #[test]
+  fn test_me_json() {
+    let json_data = include_str!("../samples/[GET]me.json");
+    let me: MeResponse = serde_json::from_str(json_data).unwrap();
+    println!("{:#?}", me);
+  }
+
+  #[test]
+  fn test_status_json() {
+    let json_data = include_str!("../samples/[GET]status.json");
+    let status: APIStatus = serde_json::from_str(json_data).unwrap();
+    println!("{:#?}", status);
+  }
 }
