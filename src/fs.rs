@@ -1,0 +1,289 @@
+use std::{fmt, sync::Arc};
+
+use base64::{engine::general_purpose::STANDARD, Engine as _};
+use chrono::{DateTime, Utc};
+use sha2::{Digest, Sha256};
+
+use crate::api::{
+  client::{JupyterRestClient, RestError},
+  param::{ContentsEntryType, ContentsFormat, ContentsGetParams, SaveContentsModel},
+  resp::{ContentValue, Contents},
+};
+
+/// High-level convenience helpers for interacting with the Jupyter contents API
+/// using file system-like verbs.
+pub struct FsService {
+  inner: Arc<JupyterRestClient>,
+}
+
+impl FsService {
+  pub fn new(inner: Arc<JupyterRestClient>) -> Self {
+    Self { inner }
+  }
+
+  /// List directory contents or return metadata for a single file.
+  pub async fn ls(&self, path: &str) -> Result<Vec<Entry>, FsError> {
+    let mut params = ContentsGetParams::default();
+    params.content = Some(true);
+    let contents = self
+      .inner
+      .get_contents(path, Some(&params))
+      .await
+      .map_err(FsError::from)?;
+
+    if EntryKind::from_content_type(&contents.content_type).is_directory() {
+      return match contents.content {
+        Some(ContentValue::Contents(entries)) => {
+          Ok(entries.into_iter().map(Entry::from).collect())
+        }
+        Some(ContentValue::Text(_)) => Err(FsError::InvalidPayload(contents.path)),
+        None => Err(FsError::MissingContent(contents.path)),
+      };
+    }
+
+    Ok(vec![Entry::from(contents)])
+  }
+
+  /// Upload raw bytes to the given Jupyter path, creating or overwriting a file.
+  pub async fn upload(&self, path: &str, data: impl AsRef<[u8]>) -> Result<Entry, FsError> {
+    let encoded = STANDARD.encode(data.as_ref());
+    let mut model = SaveContentsModel::default();
+    model.entry_type = Some(ContentsEntryType::File);
+    model.format = Some(ContentsFormat::Base64);
+    model.content = Some(encoded);
+
+    let contents = self
+      .inner
+      .save_contents(path, &model)
+      .await
+      .map_err(FsError::from)?;
+    Ok(Entry::from(contents))
+  }
+
+  /// Download a remote file/notebook and return its bytes along with metadata.
+  pub async fn download(&self, path: &str) -> Result<FileDownload, FsError> {
+    let mut params = ContentsGetParams::default();
+    params.content = Some(true);
+    params.format = Some(ContentsFormat::Base64);
+
+    let mut contents = self
+      .inner
+      .get_contents(path, Some(&params))
+      .await
+      .map_err(FsError::from)?;
+
+    let kind = EntryKind::from_content_type(&contents.content_type);
+    if !kind.is_file_like() {
+      return Err(FsError::NotAFile(contents.path));
+    }
+
+    let payload = contents
+      .content
+      .take()
+      .ok_or_else(|| FsError::MissingContent(contents.path.clone()))?;
+    let bytes = decode_file_bytes(contents.format.as_deref(), payload)?;
+    let entry = Entry::from(contents);
+    Ok(FileDownload { entry, bytes })
+  }
+
+  /// Compute the SHA-256 hash for a file by downloading its bytes first.
+  pub async fn sha256sum(&self, path: &str) -> Result<String, FsError> {
+    let file = self.download(path).await?;
+    let mut hasher = Sha256::new();
+    hasher.update(&file.bytes);
+    Ok(format!("{:x}", hasher.finalize()))
+  }
+
+  /// Remove a file or directory from the Jupyter server.
+  pub async fn rm(&self, path: &str) -> Result<(), FsError> {
+    self
+      .inner
+      .delete_contents(path)
+      .await
+      .map_err(FsError::from)?;
+    Ok(())
+  }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EntryKind {
+  File,
+  Directory,
+  Notebook,
+  Other(String),
+}
+
+impl EntryKind {
+  fn from_content_type(value: &str) -> Self {
+    match value {
+      "file" => EntryKind::File,
+      "directory" => EntryKind::Directory,
+      "notebook" => EntryKind::Notebook,
+      other => EntryKind::Other(other.to_string()),
+    }
+  }
+
+  fn is_directory(&self) -> bool {
+    matches!(self, EntryKind::Directory)
+  }
+
+  fn is_file_like(&self) -> bool {
+    matches!(self, EntryKind::File | EntryKind::Notebook | EntryKind::Other(_))
+  }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Entry {
+  pub name: String,
+  pub path: String,
+  pub kind: EntryKind,
+  pub writable: bool,
+  pub created: Option<DateTime<Utc>>,
+  pub last_modified: Option<DateTime<Utc>>,
+  pub size: Option<u64>,
+  pub mimetype: Option<String>,
+  pub hash: Option<String>,
+  pub hash_algorithm: Option<String>,
+}
+
+impl Entry {
+  fn from(contents: Contents) -> Self {
+    let Contents {
+      name,
+      path,
+      content_type,
+      writable,
+      created,
+      last_modified,
+      size,
+      mimetype,
+      hash,
+      hash_algorithm,
+      ..
+    } = contents;
+
+    Entry {
+      name,
+      path,
+      kind: EntryKind::from_content_type(&content_type),
+      writable,
+      created,
+      last_modified,
+      size,
+      mimetype,
+      hash,
+      hash_algorithm,
+    }
+  }
+}
+
+#[derive(Debug, Clone)]
+pub struct FileDownload {
+  pub entry: Entry,
+  pub bytes: Vec<u8>,
+}
+
+fn decode_file_bytes(format: Option<&str>, payload: ContentValue) -> Result<Vec<u8>, FsError> {
+  match payload {
+    ContentValue::Text(data) => match format.unwrap_or("text") {
+      "base64" => STANDARD.decode(data).map_err(FsError::from),
+      _ => Ok(data.into_bytes()),
+    },
+    ContentValue::Contents(_) => Err(FsError::InvalidPayload(
+      "expected file payload, received directory listing".into(),
+    )),
+  }
+}
+
+#[derive(Debug)]
+pub enum FsError {
+  Rest(RestError),
+  NotAFile(String),
+  MissingContent(String),
+  InvalidPayload(String),
+  Decode(base64::DecodeError),
+}
+
+impl fmt::Display for FsError {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      FsError::Rest(err) => write!(f, "rest api error: {err}"),
+      FsError::NotAFile(path) => write!(f, "{path} is not a file"),
+      FsError::MissingContent(path) => write!(f, "no content returned for {path}"),
+      FsError::InvalidPayload(reason) => write!(f, "invalid payload: {reason}"),
+      FsError::Decode(err) => write!(f, "failed to decode file payload: {err}"),
+    }
+  }
+}
+
+impl std::error::Error for FsError {
+  fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+    match self {
+      FsError::Rest(err) => Some(err),
+      FsError::Decode(err) => Some(err),
+      _ => None,
+    }
+  }
+}
+
+impl From<RestError> for FsError {
+  fn from(value: RestError) -> Self {
+    FsError::Rest(value)
+  }
+}
+
+impl From<base64::DecodeError> for FsError {
+  fn from(value: base64::DecodeError) -> Self {
+    FsError::Decode(value)
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn sample_contents(kind: &str) -> Contents {
+    Contents {
+      name: "example".into(),
+      path: "example".into(),
+      content_type: kind.into(),
+      writable: true,
+      created: None,
+      last_modified: None,
+      size: Some(42),
+      mimetype: Some("text/plain".into()),
+      content: None,
+      format: Some("text".into()),
+      hash: Some("abc".into()),
+      hash_algorithm: Some("sha256".into()),
+    }
+  }
+
+  #[test]
+  fn entry_kind_mapping() {
+    assert!(EntryKind::from_content_type("directory").is_directory());
+    assert!(EntryKind::from_content_type("file").is_file_like());
+  }
+
+  #[test]
+  fn entry_from_contents_transfers_metadata() {
+    let entry = Entry::from(sample_contents("file"));
+    assert_eq!(entry.kind, EntryKind::File);
+    assert_eq!(entry.size, Some(42));
+    assert_eq!(entry.mimetype.as_deref(), Some("text/plain"));
+    assert_eq!(entry.hash_algorithm.as_deref(), Some("sha256"));
+  }
+
+  #[test]
+  fn decode_base64_payload_to_bytes() {
+    let encoded = STANDARD.encode("payload");
+    let bytes = decode_file_bytes(Some("base64"), ContentValue::Text(encoded)).unwrap();
+    assert_eq!(bytes, b"payload");
+  }
+
+  #[test]
+  fn decode_text_payload_to_bytes() {
+    let bytes = decode_file_bytes(Some("text"), ContentValue::Text("hello".into())).unwrap();
+    assert_eq!(bytes, b"hello");
+  }
+}
