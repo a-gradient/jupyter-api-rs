@@ -508,11 +508,11 @@ impl RestClientBuilder {
     self
   }
 
-  pub fn bearer_token(mut self, token: impl AsRef<str>) -> Result<Self, RestError> {
-    let value = format!("Bearer {}", token.as_ref());
-    self.auth_header = Some(HeaderValue::from_str(&value).map_err(|err| {
+  pub fn auto_token(mut self, token: impl AsRef<str>) -> Result<Self, RestError> {
+    let value = build_token_header(token.as_ref()).map_err(|err| {
       RestError::InvalidHeader(err.to_string())
-    })?);
+    })?;
+    self.auth_header = Some(value);
     Ok(self)
   }
 
@@ -572,5 +572,90 @@ impl Segment {
       value: value.into(),
       keep_trailing_slash_if_empty: true,
     }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn _setup_client() -> JupyterRestClient {
+    RestClientBuilder::new("http://localhost:8888").unwrap()
+      .auto_token(include_str!("../../.secret").trim()).unwrap()
+      .build().unwrap()
+  }
+
+  #[test]
+  fn test_builder() {
+    let builder = RestClientBuilder::new("http://localhost:8888").unwrap();
+    let client = builder
+      .timeout(Duration::from_secs(10))
+      .user_agent("jupyter-rest-client/0.1")
+      .auto_token(include_str!("../../.secret").trim()).unwrap()
+      .build()
+      .unwrap();
+    assert_eq!(client.base_url().as_str(), "http://localhost:8888/");
+  }
+
+  #[tokio::test]
+  async fn test_status() {
+    let client = _setup_client();
+    let status = client.status().await.unwrap();
+    println!("API Status: {:?}", status);
+    assert!(status.started.is_some());
+  }
+
+  #[tokio::test]
+  async fn test_server_version() {
+    let client = _setup_client();
+    let version = client.server_version().await.unwrap();
+    println!("Server Version: {:?}", version);
+    assert!(version.version.len() > 0);
+  }
+
+  #[tokio::test]
+  async fn test_me() {
+    let client = _setup_client();
+    let me = client.me(None).await.unwrap();
+    println!("Me: {:?}", me);
+    assert!(me.identity.is_some());
+  }
+
+  #[tokio::test]
+  async fn test_list_kernels() {
+    let client = _setup_client();
+    let kernels = client.list_kernels().await.unwrap();
+    println!("Kernels: {:?}", kernels);
+  }
+
+  #[tokio::test]
+  async fn test_kernel_specs() {
+    let client = _setup_client();
+    let specs = client.kernel_specs().await.unwrap();
+    println!("Kernel Specs: {:?}", specs);
+    assert!(specs.default.is_some());
+  }
+
+  #[tokio::test]
+  async fn test_list_sessions() {
+    let client = _setup_client();
+    let sessions = client.list_sessions().await.unwrap();
+    println!("Sessions: {:?}", sessions);
+  }
+
+  #[tokio::test]
+  async fn test_list_contents() {
+    let client = _setup_client();
+    let contents = client.get_contents("/Untitled Folder", None).await.unwrap();
+    println!("Contents: {:?}", contents);
+    assert!(contents.content_type == "directory");
+
+    let contents = client.get_contents("/hello.txt", Some(&ContentsGetParams { entry_type: None, format: None, content: Some(false), hash: Some(true) })).await.unwrap();
+    // assert!(contents.)
+    println!("Contents: {:?}", contents);
+    assert_eq!(contents.content_type, "file");
+    assert_eq!(contents.content, None);
+    assert!(contents.hash.is_some());
+    assert_eq!(contents.hash_algorithm.as_deref(), Some("sha256"));
   }
 }

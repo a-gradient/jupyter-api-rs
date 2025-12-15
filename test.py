@@ -7,9 +7,11 @@ workspace_dir = Path(__file__).parent
 
 # %%
 lab_url = "http://localhost:8888/"
-client = requests.Session()
+with open(".secret", "r") as f:
+  token = f.read().strip()
 
-token = "<secret_token_here>"
+# %%
+client = requests.Session()
 resp = client.get(f"{lab_url}?token={token}")
 resp.cookies
 
