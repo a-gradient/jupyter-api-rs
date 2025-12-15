@@ -9,3 +9,9 @@ wheels/
 # Virtual environments
 .venv
 uv.lock
+
+
+# Added by cargo
+
+/target
+Cargo.lock
