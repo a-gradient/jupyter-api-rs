@@ -166,42 +166,42 @@ mod tests {
 
   #[test]
   fn test_contents_json() {
-    let json_data = include_str!("../samples/[GET]contents.json");
+    let json_data = include_str!("../../samples/[GET]contents.json");
     let contents: Contents = serde_json::from_str(json_data).unwrap();
     println!("{:#?}", contents);
   }
 
   #[test]
   fn test_kernel_specs_json() {
-    let json_data = include_str!("../samples/[GET]kernelspecs.json");
+    let json_data = include_str!("../../samples/[GET]kernelspecs.json");
     let specs: KernelSpecsResponse = serde_json::from_str(json_data).unwrap();
     println!("{:#?}", specs);
   }
 
   #[test]
   fn test_kernels_json() {
-    let json_data = include_str!("../samples/[GET]kernels.json");
+    let json_data = include_str!("../../samples/[GET]kernels.json");
     let kernels: Vec<Kernel> = serde_json::from_str(json_data).unwrap();
     println!("{:#?}", kernels);
   }
 
   #[test]
   fn test_sessions_json() {
-    let json_data = include_str!("../samples/[GET]sessions.json");
+    let json_data = include_str!("../../samples/[GET]sessions.json");
     let sessions: Vec<Session> = serde_json::from_str(json_data).unwrap();
     println!("{:#?}", sessions);
   }
 
   #[test]
   fn test_me_json() {
-    let json_data = include_str!("../samples/[GET]me.json");
+    let json_data = include_str!("../../samples/[GET]me.json");
     let me: MeResponse = serde_json::from_str(json_data).unwrap();
     println!("{:#?}", me);
   }
 
   #[test]
   fn test_status_json() {
-    let json_data = include_str!("../samples/[GET]status.json");
+    let json_data = include_str!("../../samples/[GET]status.json");
     let status: APIStatus = serde_json::from_str(json_data).unwrap();
     println!("{:#?}", status);
   }
