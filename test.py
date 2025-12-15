@@ -34,8 +34,8 @@ resp = client.get(f"{lab_url}/lab/api/workspaces")
 try_save(resp, Path("[GET]lab__workspaces"))
 
 # %%
-for i in ["sessions", "kernels", "contents", "terminals"]:
-    resp = client.get(f"{lab_url}/api/{i}")
-    try_save(resp, Path(f"[GET]{i}"))
+for i in ["sessions", "kernels", "contents", "terminals", "kernelspecs"]:
+  resp = client.get(f"{lab_url}/api/{i}")
+  try_save(resp, Path(f"[GET]{i}"))
 
 # %%

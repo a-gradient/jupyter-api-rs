@@ -14,9 +14,9 @@ pub type KernelSpecMap = HashMap<String, KernelSpec>;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct APIStatus {
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub started: Option<String>,
+  pub started: Option<chrono::DateTime<chrono::Utc>>,
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub last_activity: Option<String>,
+  pub last_activity: Option<chrono::DateTime<chrono::Utc>>,
   #[serde(skip_serializing_if = "Option::is_none")]
   pub connections: Option<u32>,
   #[serde(skip_serializing_if = "Option::is_none")]
@@ -91,10 +91,10 @@ pub struct KernelSpecsResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Kernel {
-  pub id: String,
+  pub id: uuid::Uuid,
   pub name: String,
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub last_activity: Option<String>,
+  pub last_activity: Option<chrono::DateTime<chrono::Utc>>,
   #[serde(skip_serializing_if = "Option::is_none")]
   pub connections: Option<u32>,
   #[serde(skip_serializing_if = "Option::is_none")]
@@ -104,7 +104,7 @@ pub struct Kernel {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Session {
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub id: Option<String>,
+  pub id: Option<uuid::Uuid>,
   #[serde(skip_serializing_if = "Option::is_none")]
   pub path: Option<String>,
   #[serde(skip_serializing_if = "Option::is_none")]
@@ -116,6 +116,13 @@ pub struct Session {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum ContentValue {
+  Text(String),
+  Contents(Vec<Contents>),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Contents {
   pub name: String,
   pub path: String,
@@ -123,15 +130,15 @@ pub struct Contents {
   pub content_type: String,
   pub writable: bool,
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub created: Option<String>,
+  pub created: Option<chrono::DateTime<chrono::Utc>>,
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub last_modified: Option<String>,
+  pub last_modified: Option<chrono::DateTime<chrono::Utc>>,
   #[serde(skip_serializing_if = "Option::is_none")]
   pub size: Option<u64>,
   #[serde(skip_serializing_if = "Option::is_none")]
   pub mimetype: Option<String>,
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub content: Option<Value>,
+  pub content: Option<ContentValue>,
   #[serde(skip_serializing_if = "Option::is_none")]
   pub format: Option<String>,
   #[serde(skip_serializing_if = "Option::is_none")]
@@ -142,13 +149,46 @@ pub struct Contents {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Checkpoint {
-  pub id: String,
-  pub last_modified: String,
+  pub id: uuid::Uuid,
+  pub last_modified: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Terminal {
   pub name: String,
   #[serde(skip_serializing_if = "Option::is_none")]
-  pub last_activity: Option<String>,
+  pub last_activity: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn test_contents_json() {
+    let json_data = include_str!("../samples/[GET]contents.json");
+    let contents: Contents = serde_json::from_str(json_data).unwrap();
+    println!("{:#?}", contents);
+  }
+
+  #[test]
+  fn test_kernel_specs_json() {
+    let json_data = include_str!("../samples/[GET]kernelspecs.json");
+    let specs: KernelSpecsResponse = serde_json::from_str(json_data).unwrap();
+    println!("{:#?}", specs);
+  }
+
+  #[test]
+  fn test_kernels_json() {
+    let json_data = include_str!("../samples/[GET]kernels.json");
+    let kernels: Vec<Kernel> = serde_json::from_str(json_data).unwrap();
+    println!("{:#?}", kernels);
+  }
+
+  #[test]
+  fn test_sessions_json() {
+    let json_data = include_str!("../samples/[GET]sessions.json");
+    let sessions: Vec<Session> = serde_json::from_str(json_data).unwrap();
+    println!("{:#?}", sessions);
+  }
 }
