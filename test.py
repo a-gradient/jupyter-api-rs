@@ -1,0 +1,41 @@
+# %%
+import requests
+import json
+from pathlib import Path
+
+workspace_dir = Path(__file__).parent
+
+# %%
+lab_url = "http://localhost:8888/"
+client = requests.Session()
+
+token = "<secret_token_here>"
+resp = client.get(f"{lab_url}?token={token}")
+resp.cookies
+
+# %%
+def try_save(resp, filename: Path):
+  if resp.status_code == 200:
+    try:
+      data = resp.json()
+      with open(workspace_dir / f"samples/{filename}.json", "w") as f:
+        json.dump(data, f, indent=2)
+    except json.JSONDecodeError as e:
+      print(f"JSON decode error: {e}")
+  else:
+    print(f"Error: {resp.status_code}")
+
+# %%
+resp = client.get(f"{lab_url}/api/")
+try_save(resp, Path("[GET]__root"))
+
+# %%
+resp = client.get(f"{lab_url}/lab/api/workspaces")
+try_save(resp, Path("[GET]lab__workspaces"))
+
+# %%
+for i in ["sessions", "kernels", "contents", "terminals"]:
+    resp = client.get(f"{lab_url}/api/{i}")
+    try_save(resp, Path(f"[GET]{i}"))
+
+# %%

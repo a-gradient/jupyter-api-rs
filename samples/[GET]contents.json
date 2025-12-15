@@ -1,0 +1,57 @@
+{
+  "name": "",
+  "path": "",
+  "last_modified": "2025-12-15T18:33:05.149687Z",
+  "created": "2025-12-15T18:33:05.149687Z",
+  "content": [
+    {
+      "name": "Untitled Folder",
+      "path": "Untitled Folder",
+      "last_modified": "2025-12-15T17:15:08.618626Z",
+      "created": "2025-12-15T17:15:08.618626Z",
+      "content": null,
+      "format": null,
+      "mimetype": null,
+      "size": null,
+      "writable": true,
+      "hash": null,
+      "hash_algorithm": null,
+      "type": "directory"
+    },
+    {
+      "name": "Untitled.ipynb",
+      "path": "Untitled.ipynb",
+      "last_modified": "2025-12-15T18:33:05.149531Z",
+      "created": "2025-12-15T18:33:05.149531Z",
+      "content": null,
+      "format": null,
+      "mimetype": null,
+      "size": 617,
+      "writable": true,
+      "hash": null,
+      "hash_algorithm": null,
+      "type": "notebook"
+    },
+    {
+      "name": "hello.txt",
+      "path": "hello.txt",
+      "last_modified": "2025-12-15T17:02:55.732956Z",
+      "created": "2025-12-15T17:02:55.732956Z",
+      "content": null,
+      "format": null,
+      "mimetype": "text/plain",
+      "size": 4,
+      "writable": true,
+      "hash": null,
+      "hash_algorithm": null,
+      "type": "file"
+    }
+  ],
+  "format": "json",
+  "mimetype": null,
+  "size": null,
+  "writable": true,
+  "hash": null,
+  "hash_algorithm": null,
+  "type": "directory"
+}
