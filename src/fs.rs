@@ -20,7 +20,9 @@ impl FsService {
   }
 
   /// List directory contents or return metadata for a single file.
+  #[tracing::instrument(skip(self), fields(path = %path))]
   pub async fn ls(&self, path: &str) -> Result<Vec<Entry>, FsError> {
+    trace!("resolving ls request via contents endpoint");
     let mut params = ContentsGetParams::default();
     params.content = Some(true);
     let contents = self
@@ -32,6 +34,7 @@ impl FsService {
     if EntryKind::from_content_type(&contents.content_type).is_directory() {
       return match contents.content {
         Some(ContentValue::Contents(entries)) => {
+          trace!(entry_count = entries.len(), "directory listing resolved");
           Ok(entries.into_iter().map(Entry::from).collect())
         }
         Some(ContentValue::Text(_)) => Err(FsError::InvalidPayload(contents.path)),
@@ -39,11 +42,14 @@ impl FsService {
       };
     }
 
+    trace!("path is a file; returning metadata only");
     Ok(vec![Entry::from(contents)])
   }
 
   /// Fetch metadata for a path without downloading its payload.
+  #[tracing::instrument(skip(self), fields(path = %path))]
   pub async fn metadata(&self, path: &str) -> Result<Entry, FsError> {
+    trace!("fetching metadata");
     let mut params = ContentsGetParams::default();
     params.content = Some(false);
     let contents = self
@@ -51,12 +57,17 @@ impl FsService {
       .get_contents(path, Some(&params))
       .await
       .map_err(FsError::from)?;
-    Ok(Entry::from(contents))
+    let entry = Entry::from(contents);
+    trace!(kind = ?entry.kind, "metadata fetched");
+    Ok(entry)
   }
 
   /// Upload raw bytes to the given Jupyter path, creating or overwriting a file.
+  #[tracing::instrument(skip(self, data), fields(path = %path, chunk = ?chunk))]
   async fn _upload(&self, path: &str, data: impl AsRef<[u8]>, chunk: Option<isize>) -> Result<Entry, FsError> {
-    let encoded = STANDARD.encode(data.as_ref());
+    let payload = data.as_ref();
+    trace!(bytes = payload.len(), "uploading chunk to Jupyter contents service");
+    let encoded = STANDARD.encode(payload);
     let mut model = SaveContentsModel::default();
     model.entry_type = Some(ContentsEntryType::File);
     model.format = Some(ContentsFormat::Base64);
@@ -72,6 +83,7 @@ impl FsService {
   }
 
   fn _check_uploaded(&self, entry: &Entry, total_len: u64) -> Result<(), FsError> {
+    trace!(remote_size = ?entry.size, expected = total_len, path = %entry.path, "validating uploaded file length");
     if let Some(uploaded_len) = entry.size && uploaded_len != total_len {
       return Err(FsError::InvalidPayload(format!(
         "uploaded chunk size mismatch for {}: expected {}, got {}",
@@ -83,24 +95,29 @@ impl FsService {
     Ok(())
   }
 
+  #[tracing::instrument(skip(self, data), fields(path = %path))]
   pub async fn upload(&self, path: &str, data: impl AsRef<[u8]>) -> Result<Entry, FsError> {
     let data = data.as_ref();
     let total_len = data.len() as u64;
+    trace!(bytes = total_len, "uploading file in a single request");
     let entry = self._upload(path, data, None).await?;
     self._check_uploaded(&entry, total_len)?;
     Ok(entry)
 
   }
 
+  #[tracing::instrument(skip(self, data), fields(path = %path, chunk_size = chunk_size))]
   pub async fn upload_chunked(&self, path: &str, data: impl AsRef<[u8]>, chunk_size: u64) -> Result<Entry, FsError> {
     let data = data.as_ref();
     let total_len = data.len() as u64;
+    trace!(bytes = total_len, chunk_size = chunk_size, "uploading file in chunks");
     let mut offset = 0u64;
     for idx in 1.. {
       let end = (offset + chunk_size).min(total_len);
       let chunk_data = &data[offset as usize..end as usize];
       let is_last_chunk = end >= total_len;
       let chunk_idx = if is_last_chunk { -1 } else { idx };
+      trace!(chunk_idx = chunk_idx, offset = offset, end = end, is_last_chunk = is_last_chunk, "uploading chunk");
       let entry = self._upload(path, chunk_data, Some(chunk_idx)).await?;
       // println!("uploaded {idx} chunk {offset}-{end} => {:?}", entry.size);
       offset = end;
@@ -113,7 +130,9 @@ impl FsService {
   }
 
   /// Download a remote file/notebook and return its bytes along with metadata.
+  #[tracing::instrument(skip(self), fields(path = %path))]
   pub async fn _download_use_contents(&self, path: &str) -> Result<FileDownload, FsError> {
+    trace!("downloading via /api/contents endpoint");
     let mut params = ContentsGetParams::default();
     params.content = Some(true);
     params.format = Some(ContentsFormat::Base64);
@@ -135,31 +154,44 @@ impl FsService {
       .ok_or_else(|| FsError::MissingContent(contents.path.clone()))?;
     let bytes = decode_file_bytes(contents.format.as_deref(), payload)?;
     let entry = Entry::from(contents);
+    trace!(remote_size = ?entry.size, "downloaded payload via contents endpoint");
     Ok(FileDownload { entry, bytes })
   }
 
+  #[tracing::instrument(skip(self), fields(path = %path, range = ?range))]
   pub async fn _download_use_files(&self, path: &str, range: Option<(u64, Option<u64>)>) -> Result<Vec<u8>, FsError> {
+    trace!("downloading via /files endpoint");
     Ok(self.inner.get_files(path, range).await?)
   }
 
+  #[tracing::instrument(skip(self), fields(path = %path))]
   pub async fn download(&self, path: &str) -> Result<FileDownload, FsError> {
+    trace!("attempting optimized /files download");
     if let Ok(payload) = self._download_use_files(path, None).await {
       let entry = self.metadata(path).await?;
+      trace!("downloaded via /files endpoint");
       return Ok(FileDownload { entry, bytes: payload } );
     }
+    trace!("falling back to contents fallback download");
     self._download_use_contents(path).await
   }
 
   /// Compute the SHA-256 hash for a file by downloading its bytes first.
+  #[tracing::instrument(skip(self), fields(path = %path))]
   pub async fn sha256sum(&self, path: &str) -> Result<String, FsError> {
+    trace!("downloading file to compute hash");
     let file = self.download(path).await?;
     let mut hasher = Sha256::new();
     hasher.update(&file.bytes);
-    Ok(format!("{:x}", hasher.finalize()))
+    let digest = format!("{:x}", hasher.finalize());
+    trace!("completed sha256 hash");
+    Ok(digest)
   }
 
   /// Remove a file or directory from the Jupyter server.
+  #[tracing::instrument(skip(self), fields(path = %path))]
   pub async fn rm(&self, path: &str) -> Result<(), FsError> {
+    trace!("deleting entry via contents API");
     self
       .inner
       .delete_contents(path)
@@ -169,7 +201,9 @@ impl FsService {
   }
 
   /// Create a directory at the provided fully-qualified Jupyter path.
+  #[tracing::instrument(skip(self), fields(path = %path))]
   pub async fn mkdir(&self, path: &str) -> Result<Entry, FsError> {
+    trace!("creating directory");
     let mut model = SaveContentsModel::default();
     model.entry_type = Some(ContentsEntryType::Directory);
     let contents = self
@@ -181,7 +215,9 @@ impl FsService {
   }
 
   /// Rename or move an entry to a new path.
+  #[tracing::instrument(skip(self), fields(from = %from, to = %to))]
   pub async fn rename(&self, from: &str, to: &str) -> Result<Entry, FsError> {
+    trace!("renaming entry");
     let payload = RenameContentsModel {
       path: trim_leading_slash(to).to_string(),
     };
@@ -194,7 +230,9 @@ impl FsService {
   }
 
   /// Remove a directory after verifying the target is not a plain file.
+  #[tracing::instrument(skip(self), fields(path = %path, recursive = recursive))]
   pub async fn rmdir(&self, path: &str, recursive: bool) -> Result<(), FsError> {
+    trace!("removing directory");
     let mut params = ContentsGetParams::default();
     params.content = Some(!recursive);
     let metadata = self

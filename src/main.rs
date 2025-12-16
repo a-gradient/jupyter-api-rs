@@ -10,6 +10,7 @@ use anyhow::{bail, Context};
 use clap::{value_parser, ArgAction, Parser, ValueHint};
 use jupyter_shell::{api::client::JupyterRestClient, fs::FsService, ftp};
 use reqwest::Url;
+use tracing::{info, warn};
 
 const FTP_BIND_ADDR: &str = "0.0.0.0:8021";
 const DEFAULT_HTTP_TIMEOUT_SECS: u64 = 30;
@@ -17,6 +18,7 @@ const APP_USER_AGENT: &str = concat!("jupyter-shell/", env!("CARGO_PKG_VERSION")
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+  init_tracing().context("failed to initialize logging")?;
   let cli = Cli::parse();
   let base_url = derive_base_url(&cli)?;
   let token = resolve_token(&cli)?;
@@ -27,6 +29,7 @@ async fn main() -> anyhow::Result<()> {
 
   if cli.accept_invalid_certs {
     builder = builder.danger_accept_invalid_certs(true);
+    warn!("TLS certificate verification disabled for Jupyter endpoint");
   }
 
   builder = builder.token(&token)?;
@@ -45,14 +48,28 @@ async fn main() -> anyhow::Result<()> {
   } else {
     cli.bind
   };
-  println!(
-    "Serving {} over FTP on {} (TLS verification: {})",
-    base_url,
-    bind,
-    if cli.accept_invalid_certs { "disabled" } else { "enabled" }
+  info!(
+    %base_url,
+    %bind,
+    tls_verification_disabled = cli.accept_invalid_certs,
+    "Serving Jupyter over FTP"
   );
 
   server.listen(bind.to_string()).await?;
+  info!("FTP server listener exited");
+  Ok(())
+}
+
+fn init_tracing() -> anyhow::Result<()> {
+  use tracing_subscriber::EnvFilter;
+
+  let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+  tracing_subscriber::fmt()
+    .with_env_filter(filter)
+    .with_target(false)
+    .compact()
+    .try_init()
+    .ok();
   Ok(())
 }
 

@@ -56,6 +56,7 @@ impl StorageBackend<DefaultUser> for FsStorage {
     path: P,
   ) -> Result<Self::Metadata, Error> {
     let target = normalize_request_path(path);
+    trace!(%target, "FTP metadata lookup");
     let entry = self.fs.metadata(&target).await.map_err(map_fs_error)?;
     Ok(FsMetadata::from(entry))
   }
@@ -69,6 +70,7 @@ impl StorageBackend<DefaultUser> for FsStorage {
     Self::Metadata: Metadata,
   {
     let target = normalize_request_path(path);
+    trace!(%target, "FTP directory listing");
     let entries = self.fs.ls(&target).await.map_err(map_fs_error)?;
     Ok(entries.into_iter().map(entry_to_fileinfo).collect())
   }
@@ -80,6 +82,7 @@ impl StorageBackend<DefaultUser> for FsStorage {
     start_pos: u64,
   ) -> Result<Box<dyn AsyncRead + Send + Sync + Unpin>, Error> {
     let target = normalize_request_path(path);
+    debug!(%target, start = start_pos, "FTP file read requested");
     let mut download = self.fs.download(&target).await.map_err(map_fs_error)?;
     let offset = usize::try_from(start_pos).map_err(|_| Error::from(ErrorKind::LocalError))?;
     if offset > download.bytes.len() {
@@ -108,6 +111,7 @@ impl StorageBackend<DefaultUser> for FsStorage {
       return Err(Error::from(ErrorKind::CommandNotImplemented));
     }
     let target = normalize_request_path(path);
+    debug!(%target, start = start_pos, "FTP file write requested");
     let mut buffer = Vec::new();
     input
       .read_to_end(&mut buffer)
@@ -115,6 +119,7 @@ impl StorageBackend<DefaultUser> for FsStorage {
       .map_err(|err| Error::new(ErrorKind::LocalError, err))?;
     let size = buffer.len() as u64;
     self.fs.upload(&target, buffer).await.map_err(map_fs_error)?;
+    debug!(%target, bytes = size, "FTP file write completed");
     Ok(size)
   }
 
@@ -124,6 +129,7 @@ impl StorageBackend<DefaultUser> for FsStorage {
     path: P,
   ) -> Result<(), Error> {
     let target = normalize_request_path(path);
+    debug!(%target, "FTP delete requested");
     self.fs.rm(&target).await.map_err(map_fs_error)
   }
 
@@ -133,6 +139,7 @@ impl StorageBackend<DefaultUser> for FsStorage {
     path: P,
   ) -> Result<(), Error> {
     let target = normalize_request_path(path);
+    debug!(%target, "FTP mkdir requested");
     self.fs.mkdir(&target).await.map_err(map_fs_error)?;
     Ok(())
   }
@@ -145,6 +152,7 @@ impl StorageBackend<DefaultUser> for FsStorage {
   ) -> Result<(), Error> {
     let source = normalize_request_path(from);
     let dest = normalize_request_path(to);
+    debug!(source = %source, dest = %dest, "FTP rename requested");
     self.fs.rename(&source, &dest).await.map_err(map_fs_error)?;
     Ok(())
   }
@@ -155,6 +163,7 @@ impl StorageBackend<DefaultUser> for FsStorage {
     path: P,
   ) -> Result<(), Error> {
     let target = normalize_request_path(path);
+    debug!(%target, "FTP rmdir requested");
     self.fs.rmdir(&target, false).await.map_err(map_fs_error)
   }
 
@@ -164,6 +173,7 @@ impl StorageBackend<DefaultUser> for FsStorage {
     path: P,
   ) -> Result<(), Error> {
     let target = normalize_request_path(path);
+    trace!(%target, "FTP cwd validation");
     let entry = self.fs.metadata(&target).await.map_err(map_fs_error)?;
     if entry.kind.is_directory() {
       Ok(())
@@ -279,6 +289,7 @@ fn normalize_request_path<P: AsRef<Path>>(path: P) -> String {
 }
 
 fn map_fs_error(err: FsError) -> Error {
+  debug!(error = ?err, "FsService error surfaced to FTP client");
   match err {
     FsError::Rest(rest) => map_rest_error(rest),
     FsError::NotAFile(_) => Error::from(ErrorKind::PermanentFileNotAvailable),
@@ -290,6 +301,7 @@ fn map_fs_error(err: FsError) -> Error {
 }
 
 fn map_rest_error(err: RestError) -> Error {
+  trace!(error = ?err, "mapping REST error to FTP status");
   match err {
     RestError::Api { status, .. } => match status {
       StatusCode::NOT_FOUND => Error::from(ErrorKind::PermanentFileNotAvailable),
