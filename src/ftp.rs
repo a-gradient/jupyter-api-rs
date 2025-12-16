@@ -285,6 +285,7 @@ fn map_fs_error(err: FsError) -> Error {
     FsError::NotADirectory(_) => Error::from(ErrorKind::PermanentDirectoryNotAvailable),
     FsError::MissingContent(_) | FsError::InvalidPayload(_) => Error::new(ErrorKind::LocalError, err),
     FsError::Decode(inner) => Error::new(ErrorKind::LocalError, inner),
+    FsError::NotImplemented(feature) => Error::new(ErrorKind::CommandNotImplemented, feature),
   }
 }
 

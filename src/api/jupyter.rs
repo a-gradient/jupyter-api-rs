@@ -414,6 +414,32 @@ impl JupyterApi for JupyterRestClient {
   }
 }
 
+#[async_trait::async_trait]
+pub trait JupyterLabApi {
+  async fn get_files(&self, path: &str, range: Option<(u64, Option<u64>)>) -> Result<Vec<u8>, RestError>;
+}
+
+#[async_trait::async_trait]
+impl JupyterLabApi for JupyterRestClient {
+  async fn get_files(&self, path: &str, range: Option<(u64, Option<u64>)>) -> Result<Vec<u8>, RestError> {
+    let url = self.build_url(&[
+      Segment::literal("files"),
+      Segment::path_allow_empty(path),
+    ])?;
+    let mut request = self.request(Method::GET, url);
+    let bytes_range = match range {
+      Some((start, Some(end))) => format!("bytes={}-{}", start, end - 1),
+      Some((start, None)) => format!("bytes={}-", start),
+      None => "".to_string(),
+    };
+    if !bytes_range.is_empty() {
+      request = request.header("Range", bytes_range);
+    }
+    let response = self.send(request).await?;
+    response.bytes().await.map(|b| b.to_vec()).map_err(RestError::Http)
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use crate::api::client::tests::_setup_client;
@@ -480,5 +506,18 @@ mod tests {
     assert_eq!(contents.content, None);
     assert!(contents.hash.is_some());
     assert_eq!(contents.hash_algorithm.as_deref(), Some("sha256"));
+  }
+
+  #[tokio::test]
+  async fn test_download_contents() {
+    let client = _setup_client();
+    let data = client.get_files("/hello.txt", None).await.unwrap();
+    let text = String::from_utf8_lossy(&data);
+    println!("Downloaded hello.txt: {}", text);
+
+    let data2 = client.get_files("/hello.txt", Some((1, Some(2)))).await.unwrap();
+    let text2 = String::from_utf8_lossy(&data2);
+    println!("Downloaded hello.txt (1-2): {}", text2);
+    assert_eq!(&data[1..2], &data2);
   }
 }

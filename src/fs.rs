@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
 
 use crate::api::{
-  client::{JupyterRestClient, RestError}, jupyter::JupyterApi, param::{ContentsEntryType, ContentsFormat, ContentsGetParams, RenameContentsModel, SaveContentsModel}, resp::{ContentValue, Contents}
+  client::{JupyterRestClient, RestError}, jupyter::{JupyterApi, JupyterLabApi}, param::{ContentsEntryType, ContentsFormat, ContentsGetParams, RenameContentsModel, SaveContentsModel}, resp::{ContentValue, Contents}
 };
 
 /// High-level convenience helpers for interacting with the Jupyter contents API
@@ -113,7 +113,7 @@ impl FsService {
   }
 
   /// Download a remote file/notebook and return its bytes along with metadata.
-  pub async fn download(&self, path: &str) -> Result<FileDownload, FsError> {
+  pub async fn _download_use_contents(&self, path: &str) -> Result<FileDownload, FsError> {
     let mut params = ContentsGetParams::default();
     params.content = Some(true);
     params.format = Some(ContentsFormat::Base64);
@@ -136,6 +136,18 @@ impl FsService {
     let bytes = decode_file_bytes(contents.format.as_deref(), payload)?;
     let entry = Entry::from(contents);
     Ok(FileDownload { entry, bytes })
+  }
+
+  pub async fn _download_use_files(&self, path: &str, range: Option<(u64, Option<u64>)>) -> Result<Vec<u8>, FsError> {
+    Ok(self.inner.get_files(path, range).await?)
+  }
+
+  pub async fn download(&self, path: &str) -> Result<FileDownload, FsError> {
+    if let Ok(payload) = self._download_use_files(path, None).await {
+      let entry = self.metadata(path).await?;
+      return Ok(FileDownload { entry, bytes: payload } );
+    }
+    self._download_use_contents(path).await
   }
 
   /// Compute the SHA-256 hash for a file by downloading its bytes first.
@@ -316,6 +328,7 @@ pub enum FsError {
   MissingContent(String),
   InvalidPayload(String),
   Decode(base64::DecodeError),
+  NotImplemented(String),
 }
 
 impl fmt::Display for FsError {
@@ -327,6 +340,7 @@ impl fmt::Display for FsError {
       FsError::MissingContent(path) => write!(f, "no content returned for {path}"),
       FsError::InvalidPayload(reason) => write!(f, "invalid payload: {reason}"),
       FsError::Decode(err) => write!(f, "failed to decode file payload: {err}"),
+      FsError::NotImplemented(feature) => write!(f, "not implemented: {feature}"),
     }
   }
 }
