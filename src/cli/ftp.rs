@@ -11,10 +11,9 @@ use jupyter_shell::{api::client::JupyterRestClient, fs::FsService, ftp};
 use reqwest::Url;
 use tracing::{info, warn};
 
-use crate::cli::TokenArgs;
+use crate::cli::{APP_USER_AGENT, DEFAULT_JUPYTER_URL, TokenArgs};
 
 const FTP_BIND_ADDR: &str = "0.0.0.0:8021";
-const APP_USER_AGENT: &str = concat!("jupyter-shell/", env!("CARGO_PKG_VERSION"));
 
 pub(crate) async fn run(args: FtpArgs) -> anyhow::Result<()> {
   let token_args = TokenArgs {
@@ -68,20 +67,22 @@ pub(crate) async fn run(args: FtpArgs) -> anyhow::Result<()> {
 #[derive(Args, Debug)]
 #[command(about = "Expose a Jupyter deployment over FTP")]
 pub struct FtpArgs {
-  #[arg(value_name = "JUPYTER_URL", help = "Full Jupyter URL (supports ?token=<value>)")]
+  #[arg(value_name = "JUPYTER_URL", default_value = DEFAULT_JUPYTER_URL, help = "Full Jupyter URL (supports ?token=<value>)")]
   endpoint_url: Url,
   #[arg(long, value_name = "TOKEN", env = "JUPYTER_TOKEN", help = "Override the token provided in the Jupyter URL")]
   token: Option<String>,
   #[arg(long, value_name = "FILE", value_hint = ValueHint::FilePath, env = "JUPYTER_TOKEN_FILE", conflicts_with = "token", help = "Load the API token from a file")]
   token_file: Option<PathBuf>,
-  #[arg(long, value_name = "IP:PORT", env = "JUPYTER_SHELL_BIND_ADDR", default_value = FTP_BIND_ADDR, help = "Address to bind the FTP server to")]
-  bind: SocketAddr,
-  #[arg(short = 'p', long, value_name = "PORT", env = "JUPYTER_SHELL_BIND_PORT", help = "Port to bind the FTP server to (overrides --bind)")]
-  bind_port: Option<u16>,
+
   #[arg(long = "timeout", value_name = "SECONDS", env = "JUPYTER_SHELL_HTTP_TIMEOUT", value_parser = value_parser!(u64).range(1..=3600), help = "HTTP client timeout in seconds")]
   http_timeout_secs: Option<u64>,
   #[arg(long, action = ArgAction::SetTrue, env = "JUPYTER_SHELL_ACCEPT_INVALID_CERTS", help = "Disable TLS certificate verification for the Jupyter endpoint")]
   accept_invalid_certs: bool,
   #[arg(long, value_name = "PATH", env = "JUPYTER_SHELL_API_BASE_PATH", help = "Override the API base path instead of auto-detecting it")]
   api_base_path: Option<String>,
+
+  #[arg(long, value_name = "IP:PORT", env = "JUPYTER_SHELL_BIND_ADDR", default_value = FTP_BIND_ADDR, help = "Address to bind the FTP server to")]
+  bind: SocketAddr,
+  #[arg(short = 'p', long, value_name = "PORT", env = "JUPYTER_SHELL_BIND_PORT", help = "Port to bind the FTP server to (overrides --bind)")]
+  bind_port: Option<u16>,
 }

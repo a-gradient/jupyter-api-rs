@@ -8,6 +8,9 @@ use tracing::info;
 pub mod ftp;
 pub mod scp;
 
+pub(crate) const APP_USER_AGENT: &str = concat!("jupyter-shell/", env!("CARGO_PKG_VERSION"));
+pub(crate) const DEFAULT_JUPYTER_URL: &str = "http://localhost:8888/";
+
 #[derive(Parser, Debug)]
 #[command(name = "jupyter_shell", version, about = "Expose a Jupyter deployment over remote file protocols")]
 pub struct Cli {
