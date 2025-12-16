@@ -41,3 +41,10 @@ for i in ["sessions", "kernels", "contents", "terminals", "kernelspecs", "status
   try_save(resp, Path(f"[GET]{i}"))
 
 # %%
+import requests
+byte_range = range(2)
+resp = requests.get(f"{lab_url}/files/hello.txt?token={token}", headers={
+  "Range": f"bytes={byte_range.start}-{byte_range.stop - 1}"
+})
+resp.text
+# %%

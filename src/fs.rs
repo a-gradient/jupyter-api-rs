@@ -57,12 +57,13 @@ impl FsService {
   }
 
   /// Upload raw bytes to the given Jupyter path, creating or overwriting a file.
-  pub async fn upload(&self, path: &str, data: impl AsRef<[u8]>) -> Result<Entry, FsError> {
+  async fn _upload(&self, path: &str, data: impl AsRef<[u8]>, chunk: Option<isize>) -> Result<Entry, FsError> {
     let encoded = STANDARD.encode(data.as_ref());
     let mut model = SaveContentsModel::default();
     model.entry_type = Some(ContentsEntryType::File);
     model.format = Some(ContentsFormat::Base64);
     model.content = Some(encoded);
+    model.chunk = chunk;
 
     let contents = self
       .inner
@@ -70,6 +71,47 @@ impl FsService {
       .await
       .map_err(FsError::from)?;
     Ok(Entry::from(contents))
+  }
+
+  fn _check_uploaded(&self, entry: &Entry, total_len: u64) -> Result<(), FsError> {
+    if let Some(uploaded_len) = entry.size && uploaded_len != total_len {
+      return Err(FsError::InvalidPayload(format!(
+        "uploaded chunk size mismatch for {}: expected {}, got {}",
+        entry.path,
+        total_len,
+        uploaded_len
+      )));
+    }
+    Ok(())
+  }
+
+  pub async fn upload(&self, path: &str, data: impl AsRef<[u8]>) -> Result<Entry, FsError> {
+    let data = data.as_ref();
+    let total_len = data.len() as u64;
+    let entry = self._upload(path, data, None).await?;
+    self._check_uploaded(&entry, total_len)?;
+    Ok(entry)
+
+  }
+
+  pub async fn upload_chunked(&self, path: &str, data: impl AsRef<[u8]>, chunk_size: u64) -> Result<Entry, FsError> {
+    let data = data.as_ref();
+    let total_len = data.len() as u64;
+    let mut offset = 0u64;
+    for idx in 1.. {
+      let end = (offset + chunk_size).min(total_len);
+      let chunk_data = &data[offset as usize..end as usize];
+      let is_last_chunk = end >= total_len;
+      let chunk_idx = if is_last_chunk { -1 } else { idx };
+      let entry = self._upload(path, chunk_data, Some(chunk_idx)).await?;
+      // println!("uploaded {idx} chunk {offset}-{end} => {:?}", entry.size);
+      offset = end;
+      if is_last_chunk {
+        self._check_uploaded(&entry, offset)?;
+        return Ok(entry)
+      }
+    }
+    unreachable!()
   }
 
   /// Download a remote file/notebook and return its bytes along with metadata.
@@ -362,6 +404,7 @@ mod tests {
   async fn test_ls_directory() {
     let client = crate::api::client::tests::_setup_client();
     let fs = FsService::new(Arc::new(client));
+    fs.rm("1.txt").await.ok();
     let result = fs.ls("/").await.unwrap();
     println!("Directory listing: {:?}", result.iter().map(|e| &e.name).collect::<Vec<_>>());
     let entry = fs.upload("1.txt", "123").await.unwrap();
@@ -374,5 +417,19 @@ mod tests {
     fs.rm("1.txt").await.unwrap();
     let entries2 = fs.ls("/").await.unwrap();
     assert_eq!(entries2.len(), result.len());
+  }
+
+  #[tokio::test]
+  async fn test_upload_chunked() {
+    let client = crate::api::client::tests::_setup_client();
+    let fs = FsService::new(Arc::new(client));
+
+    fs.rm("chunked.txt").await.ok();
+    let data = b"The quick brown fox jumps over the lazy dog".to_vec();
+    let entry = fs.upload_chunked("chunked.txt", &data, 10).await.unwrap();
+    assert_eq!(entry.size, Some(data.len() as u64));
+    let download = fs.download("chunked.txt").await.unwrap();
+    assert_eq!(download.bytes, data);
+    fs.rm("chunked.txt").await.unwrap();
   }
 }

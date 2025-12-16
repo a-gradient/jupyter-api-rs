@@ -69,6 +69,9 @@ pub struct RenameContentsModel {
 /// Payload accepted by `PUT /api/contents/{path}` for saving/uploading files.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct SaveContentsModel {
+  /// last chunk is -1
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub chunk: Option<isize>,
   #[serde(skip_serializing_if = "Option::is_none")]
   pub name: Option<String>,
   #[serde(skip_serializing_if = "Option::is_none")]
