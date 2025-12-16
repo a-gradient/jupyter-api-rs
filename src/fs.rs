@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 
 use crate::api::{
   client::{JupyterRestClient, RestError},
-  param::{ContentsEntryType, ContentsFormat, ContentsGetParams, SaveContentsModel},
+  param::{ContentsEntryType, ContentsFormat, ContentsGetParams, RenameContentsModel, SaveContentsModel},
   resp::{ContentValue, Contents},
 };
 
@@ -42,6 +42,18 @@ impl FsService {
     }
 
     Ok(vec![Entry::from(contents)])
+  }
+
+  /// Fetch metadata for a path without downloading its payload.
+  pub async fn metadata(&self, path: &str) -> Result<Entry, FsError> {
+    let mut params = ContentsGetParams::default();
+    params.content = Some(false);
+    let contents = self
+      .inner
+      .get_contents(path, Some(&params))
+      .await
+      .map_err(FsError::from)?;
+    Ok(Entry::from(contents))
   }
 
   /// Upload raw bytes to the given Jupyter path, creating or overwriting a file.
@@ -116,6 +128,19 @@ impl FsService {
     Ok(Entry::from(contents))
   }
 
+  /// Rename or move an entry to a new path.
+  pub async fn rename(&self, from: &str, to: &str) -> Result<Entry, FsError> {
+    let payload = RenameContentsModel {
+      path: trim_leading_slash(to).to_string(),
+    };
+    let contents = self
+      .inner
+      .rename_contents(from, &payload)
+      .await
+      .map_err(FsError::from)?;
+    Ok(Entry::from(contents))
+  }
+
   /// Remove a directory after verifying the target is not a plain file.
   pub async fn rmdir(&self, path: &str) -> Result<(), FsError> {
     let mut params = ContentsGetParams::default();
@@ -154,11 +179,11 @@ impl EntryKind {
     }
   }
 
-  fn is_directory(&self) -> bool {
+  pub fn is_directory(&self) -> bool {
     matches!(self, EntryKind::Directory)
   }
 
-  fn is_file_like(&self) -> bool {
+  pub fn is_file_like(&self) -> bool {
     matches!(self, EntryKind::File | EntryKind::Notebook | EntryKind::Other(_))
   }
 }
@@ -225,6 +250,15 @@ fn decode_file_bytes(format: Option<&str>, payload: ContentValue) -> Result<Vec<
     ContentValue::Contents(_) => Err(FsError::InvalidPayload(
       "expected file payload, received directory listing".into(),
     )),
+  }
+}
+
+fn trim_leading_slash(path: &str) -> &str {
+  let trimmed = path.trim_start_matches('/');
+  if trimmed.is_empty() {
+    path.trim_matches('/')
+  } else {
+    trimmed
   }
 }
 
