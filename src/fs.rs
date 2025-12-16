@@ -22,7 +22,7 @@ impl FsService {
   /// List directory contents or return metadata for a single file.
   #[tracing::instrument(skip(self), fields(path = %path))]
   pub async fn ls(&self, path: &str) -> Result<Vec<Entry>, FsError> {
-    trace!("resolving ls request via contents endpoint");
+    debug!("fs: ls {}", path);
     let mut params = ContentsGetParams::default();
     params.content = Some(true);
     let contents = self
@@ -49,7 +49,7 @@ impl FsService {
   /// Fetch metadata for a path without downloading its payload.
   #[tracing::instrument(skip(self), fields(path = %path))]
   pub async fn metadata(&self, path: &str) -> Result<Entry, FsError> {
-    trace!("fetching metadata");
+    debug!("fs: metadata {}", path);
     let mut params = ContentsGetParams::default();
     params.content = Some(false);
     let contents = self
@@ -98,6 +98,7 @@ impl FsService {
   #[tracing::instrument(skip(self, data), fields(path = %path))]
   pub async fn upload(&self, path: &str, data: impl AsRef<[u8]>) -> Result<Entry, FsError> {
     let data = data.as_ref();
+    debug!(len=data.len(), "fs: upload {}", path);
     let total_len = data.len() as u64;
     trace!(bytes = total_len, "uploading file in a single request");
     let entry = self._upload(path, data, None).await?;
@@ -109,6 +110,7 @@ impl FsService {
   #[tracing::instrument(skip(self, data), fields(path = %path, chunk_size = chunk_size))]
   pub async fn upload_chunked(&self, path: &str, data: impl AsRef<[u8]>, chunk_size: u64) -> Result<Entry, FsError> {
     let data = data.as_ref();
+    debug!(len=data.len(), chunk_size, "fs: upload_chunked {}", path);
     let total_len = data.len() as u64;
     trace!(bytes = total_len, chunk_size = chunk_size, "uploading file in chunks");
     let mut offset = 0u64;
@@ -166,6 +168,7 @@ impl FsService {
 
   #[tracing::instrument(skip(self), fields(path = %path))]
   pub async fn download(&self, path: &str) -> Result<FileDownload, FsError> {
+    debug!("fs: download {}", path);
     trace!("attempting optimized /files download");
     if let Ok(payload) = self._download_use_files(path, None).await {
       let entry = self.metadata(path).await?;
@@ -232,7 +235,7 @@ impl FsService {
   /// Remove a directory after verifying the target is not a plain file.
   #[tracing::instrument(skip(self), fields(path = %path, recursive = recursive))]
   pub async fn rmdir(&self, path: &str, recursive: bool) -> Result<(), FsError> {
-    trace!("removing directory");
+    debug!(recursive, "fs: rmdir {}", path);
     let mut params = ContentsGetParams::default();
     params.content = Some(!recursive);
     let metadata = self

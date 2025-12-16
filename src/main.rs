@@ -63,10 +63,10 @@ async fn main() -> anyhow::Result<()> {
 fn init_tracing() -> anyhow::Result<()> {
   use tracing_subscriber::EnvFilter;
 
-  let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+  let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug,libunftp=warn,reqwest=info,hyper_util=warn"));
   tracing_subscriber::fmt()
     .with_env_filter(filter)
-    .with_target(false)
+    // .with_target(false)
     .compact()
     .try_init()
     .ok();
@@ -94,6 +94,7 @@ fn resolve_token(cli: &Cli) -> anyhow::Result<String> {
     if token.is_empty() {
       bail!("token file {} was empty", path.display());
     }
+    info!("token: {}", token[0..std::cmp::min(4, token.len())].to_string() + "****");
     return Ok(token);
   }
 
