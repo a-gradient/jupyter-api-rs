@@ -270,8 +270,11 @@ fn ensure_host_alignment(base_url: &Url, remote: &RemoteOperand) -> anyhow::Resu
     return Ok(());
   };
   if let Some(host) = remote.host.as_deref() {
+    if host == "remote" || host == "@remote" {
+      return Ok(());
+    }
     if !host.eq_ignore_ascii_case(expected) {
-      bail!(
+      warn!(
         "remote operand '{}' references host '{}' but the endpoint resolves to '{}'",
         remote.raw,
         host,
