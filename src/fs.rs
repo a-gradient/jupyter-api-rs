@@ -5,9 +5,7 @@ use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
 
 use crate::api::{
-  client::{JupyterRestClient, RestError},
-  param::{ContentsEntryType, ContentsFormat, ContentsGetParams, RenameContentsModel, SaveContentsModel},
-  resp::{ContentValue, Contents},
+  client::{JupyterRestClient, RestError}, jupyter::JupyterApi, param::{ContentsEntryType, ContentsFormat, ContentsGetParams, RenameContentsModel, SaveContentsModel}, resp::{ContentValue, Contents}
 };
 
 /// High-level convenience helpers for interacting with the Jupyter contents API

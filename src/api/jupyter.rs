@@ -5,14 +5,112 @@ use reqwest::Method;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-impl JupyterRestClient {
-  pub async fn server_version(&self) -> Result<ServerVersion, RestError> {
+#[async_trait::async_trait]
+pub trait JupyterApi {
+  async fn server_version(&self) -> Result<ServerVersion, RestError>;
+
+  async fn get_contents(
+    &self,
+    path: &str,
+    params: Option<&ContentsGetParams>,
+  ) -> Result<Contents, RestError>;
+
+  async fn create_contents(
+    &self,
+    path: &str,
+    model: &CreateContentsModel,
+  ) -> Result<Contents, RestError>;
+
+  async fn rename_contents(
+    &self,
+    path: &str,
+    rename: &RenameContentsModel,
+  ) -> Result<Contents, RestError>;
+
+  async fn save_contents(
+    &self,
+    path: &str,
+    model: &SaveContentsModel,
+  ) -> Result<Contents, RestError>;
+
+  async fn delete_contents(&self, path: &str) -> Result<(), RestError>;
+
+  async fn list_checkpoints(&self, path: &str) -> Result<Vec<Checkpoint>, RestError>;
+
+  async fn create_checkpoint(&self, path: &str) -> Result<Checkpoint, RestError>;
+
+  async fn restore_checkpoint(
+    &self,
+    path: &str,
+    checkpoint_id: &str,
+  ) -> Result<(), RestError>;
+
+  async fn delete_checkpoint(
+    &self,
+    path: &str,
+    checkpoint_id: &str,
+  ) -> Result<(), RestError>;
+
+  async fn get_session(&self, session_id: Uuid) -> Result<Session, RestError>;
+
+  async fn update_session(
+    &self,
+    session_id: Uuid,
+    session: &Session,
+  ) -> Result<Session, RestError>;
+
+  async fn delete_session(&self, session_id: Uuid) -> Result<(), RestError>;
+
+  async fn list_sessions(&self) -> Result<Vec<Session>, RestError>;
+
+  async fn create_session(&self, session: &Session) -> Result<Session, RestError>;
+
+  async fn list_kernels(&self) -> Result<Vec<Kernel>, RestError>;
+
+  async fn start_kernel(&self, options: &KernelStartOptions) -> Result<Kernel, RestError>;
+
+  async fn get_kernel(&self, kernel_id: Uuid) -> Result<Kernel, RestError>;
+
+  async fn delete_kernel(&self, kernel_id: Uuid) -> Result<(), RestError>;
+
+  async fn interrupt_kernel(&self, kernel_id: Uuid) -> Result<(), RestError>;
+
+  async fn restart_kernel(&self, kernel_id: Uuid) -> Result<Kernel, RestError>;
+
+  async fn kernel_specs(&self) -> Result<KernelSpecsResponse, RestError>;
+
+  async fn get_config_section(&self, section_name: &str) -> Result<Value, RestError>;
+
+  async fn patch_config_section(
+    &self,
+    section_name: &str,
+    configuration: &ConfigPatchRequest,
+  ) -> Result<Value, RestError>;
+
+  async fn list_terminals(&self) -> Result<Vec<Terminal>, RestError>;
+
+  async fn create_terminal(&self, name: Option<&str>) -> Result<Terminal, RestError>;
+
+  async fn get_terminal(&self, terminal_id: &str) -> Result<Terminal, RestError>;
+
+  async fn delete_terminal(&self, terminal_id: &str) -> Result<(), RestError>;
+
+  async fn me(&self, params: Option<&PermissionsQueryParam>) -> Result<MeResponse, RestError>;
+
+  async fn status(&self) -> Result<APIStatus, RestError>;
+
+  async fn download_spec(&self) -> Result<String, RestError>;
+}
+
+#[async_trait::async_trait]
+impl JupyterApi for JupyterRestClient {
+  async fn server_version(&self) -> Result<ServerVersion, RestError> {
     let url = self.build_url(&[Segment::literal("api"), Segment::literal("")])?;
     let request = self.request(Method::GET, url);
     self.send_json(request).await
   }
 
-  pub async fn get_contents(
+  async fn get_contents(
     &self,
     path: &str,
     params: Option<&ContentsGetParams>,
@@ -26,7 +124,7 @@ impl JupyterRestClient {
     self.send_json(request).await
   }
 
-  pub async fn create_contents(
+  async fn create_contents(
     &self,
     path: &str,
     model: &CreateContentsModel,
@@ -37,7 +135,7 @@ impl JupyterRestClient {
     self.send_json(request).await
   }
 
-  pub async fn rename_contents(
+  async fn rename_contents(
     &self,
     path: &str,
     rename: &RenameContentsModel,
@@ -48,7 +146,7 @@ impl JupyterRestClient {
     self.send_json(request).await
   }
 
-  pub async fn save_contents(
+  async fn save_contents(
     &self,
     path: &str,
     model: &SaveContentsModel,
@@ -59,14 +157,14 @@ impl JupyterRestClient {
     self.send_json(request).await
   }
 
-  pub async fn delete_contents(&self, path: &str) -> Result<(), RestError> {
+  async fn delete_contents(&self, path: &str) -> Result<(), RestError> {
     let url =
       self.build_url(&[Segment::literal("api"), Segment::literal("contents"), Segment::path(path)])?;
     let request = self.request(Method::DELETE, url);
     self.send_empty(request).await
   }
 
-  pub async fn list_checkpoints(&self, path: &str) -> Result<Vec<Checkpoint>, RestError> {
+  async fn list_checkpoints(&self, path: &str) -> Result<Vec<Checkpoint>, RestError> {
     let url = self.build_url(&[
       Segment::literal("api"),
       Segment::literal("contents"),
@@ -77,7 +175,7 @@ impl JupyterRestClient {
     self.send_json(request).await
   }
 
-  pub async fn create_checkpoint(&self, path: &str) -> Result<Checkpoint, RestError> {
+  async fn create_checkpoint(&self, path: &str) -> Result<Checkpoint, RestError> {
     let url = self.build_url(&[
       Segment::literal("api"),
       Segment::literal("contents"),
@@ -88,7 +186,7 @@ impl JupyterRestClient {
     self.send_json(request).await
   }
 
-  pub async fn restore_checkpoint(
+  async fn restore_checkpoint(
     &self,
     path: &str,
     checkpoint_id: &str,
@@ -104,7 +202,7 @@ impl JupyterRestClient {
     self.send_empty(request).await
   }
 
-  pub async fn delete_checkpoint(
+  async fn delete_checkpoint(
     &self,
     path: &str,
     checkpoint_id: &str,
@@ -120,7 +218,7 @@ impl JupyterRestClient {
     self.send_empty(request).await
   }
 
-  pub async fn get_session(&self, session_id: Uuid) -> Result<Session, RestError> {
+  async fn get_session(&self, session_id: Uuid) -> Result<Session, RestError> {
     let session = session_id.to_string();
     let url = self.build_url(&[
       Segment::literal("api"),
@@ -131,7 +229,7 @@ impl JupyterRestClient {
     self.send_json(request).await
   }
 
-  pub async fn update_session(
+  async fn update_session(
     &self,
     session_id: Uuid,
     session: &Session,
@@ -146,7 +244,7 @@ impl JupyterRestClient {
     self.send_json(request).await
   }
 
-  pub async fn delete_session(&self, session_id: Uuid) -> Result<(), RestError> {
+  async fn delete_session(&self, session_id: Uuid) -> Result<(), RestError> {
     let session = session_id.to_string();
     let url = self.build_url(&[
       Segment::literal("api"),
@@ -157,31 +255,31 @@ impl JupyterRestClient {
     self.send_empty(request).await
   }
 
-  pub async fn list_sessions(&self) -> Result<Vec<Session>, RestError> {
+  async fn list_sessions(&self) -> Result<Vec<Session>, RestError> {
     let url = self.build_url(&[Segment::literal("api"), Segment::literal("sessions")])?;
     let request = self.request(Method::GET, url);
     self.send_json(request).await
   }
 
-  pub async fn create_session(&self, session: &Session) -> Result<Session, RestError> {
+  async fn create_session(&self, session: &Session) -> Result<Session, RestError> {
     let url = self.build_url(&[Segment::literal("api"), Segment::literal("sessions")])?;
     let request = self.request(Method::POST, url).json(session);
     self.send_json(request).await
   }
 
-  pub async fn list_kernels(&self) -> Result<Vec<Kernel>, RestError> {
+  async fn list_kernels(&self) -> Result<Vec<Kernel>, RestError> {
     let url = self.build_url(&[Segment::literal("api"), Segment::literal("kernels")])?;
     let request = self.request(Method::GET, url);
     self.send_json(request).await
   }
 
-  pub async fn start_kernel(&self, options: &KernelStartOptions) -> Result<Kernel, RestError> {
+  async fn start_kernel(&self, options: &KernelStartOptions) -> Result<Kernel, RestError> {
     let url = self.build_url(&[Segment::literal("api"), Segment::literal("kernels")])?;
     let request = self.request(Method::POST, url).json(options);
     self.send_json(request).await
   }
 
-  pub async fn get_kernel(&self, kernel_id: Uuid) -> Result<Kernel, RestError> {
+  async fn get_kernel(&self, kernel_id: Uuid) -> Result<Kernel, RestError> {
     let kernel = kernel_id.to_string();
     let url = self.build_url(&[
       Segment::literal("api"),
@@ -192,7 +290,7 @@ impl JupyterRestClient {
     self.send_json(request).await
   }
 
-  pub async fn delete_kernel(&self, kernel_id: Uuid) -> Result<(), RestError> {
+  async fn delete_kernel(&self, kernel_id: Uuid) -> Result<(), RestError> {
     let kernel = kernel_id.to_string();
     let url = self.build_url(&[
       Segment::literal("api"),
@@ -203,7 +301,7 @@ impl JupyterRestClient {
     self.send_empty(request).await
   }
 
-  pub async fn interrupt_kernel(&self, kernel_id: Uuid) -> Result<(), RestError> {
+  async fn interrupt_kernel(&self, kernel_id: Uuid) -> Result<(), RestError> {
     let kernel = kernel_id.to_string();
     let url = self.build_url(&[
       Segment::literal("api"),
@@ -215,7 +313,7 @@ impl JupyterRestClient {
     self.send_empty(request).await
   }
 
-  pub async fn restart_kernel(&self, kernel_id: Uuid) -> Result<Kernel, RestError> {
+  async fn restart_kernel(&self, kernel_id: Uuid) -> Result<Kernel, RestError> {
     let kernel = kernel_id.to_string();
     let url = self.build_url(&[
       Segment::literal("api"),
@@ -227,13 +325,13 @@ impl JupyterRestClient {
     self.send_json(request).await
   }
 
-  pub async fn kernel_specs(&self) -> Result<KernelSpecsResponse, RestError> {
+  async fn kernel_specs(&self) -> Result<KernelSpecsResponse, RestError> {
     let url = self.build_url(&[Segment::literal("api"), Segment::literal("kernelspecs")])?;
     let request = self.request(Method::GET, url);
     self.send_json(request).await
   }
 
-  pub async fn get_config_section(&self, section_name: &str) -> Result<Value, RestError> {
+  async fn get_config_section(&self, section_name: &str) -> Result<Value, RestError> {
     let url = self.build_url(&[
       Segment::literal("api"),
       Segment::literal("config"),
@@ -243,7 +341,7 @@ impl JupyterRestClient {
     self.send_json(request).await
   }
 
-  pub async fn patch_config_section(
+  async fn patch_config_section(
     &self,
     section_name: &str,
     configuration: &ConfigPatchRequest,
@@ -257,13 +355,13 @@ impl JupyterRestClient {
     self.send_json(request).await
   }
 
-  pub async fn list_terminals(&self) -> Result<Vec<Terminal>, RestError> {
+  async fn list_terminals(&self) -> Result<Vec<Terminal>, RestError> {
     let url = self.build_url(&[Segment::literal("api"), Segment::literal("terminals")])?;
     let request = self.request(Method::GET, url);
     self.send_json(request).await
   }
 
-  pub async fn create_terminal(&self, name: Option<&str>) -> Result<Terminal, RestError> {
+  async fn create_terminal(&self, name: Option<&str>) -> Result<Terminal, RestError> {
     let url = self.build_url(&[Segment::literal("api"), Segment::literal("terminals")])?;
     let payload = match name {
       Some(value) => json!({ "name": value }),
@@ -273,7 +371,7 @@ impl JupyterRestClient {
     self.send_json(request).await
   }
 
-  pub async fn get_terminal(&self, terminal_id: &str) -> Result<Terminal, RestError> {
+  async fn get_terminal(&self, terminal_id: &str) -> Result<Terminal, RestError> {
     let url = self.build_url(&[
       Segment::literal("api"),
       Segment::literal("terminals"),
@@ -283,7 +381,7 @@ impl JupyterRestClient {
     self.send_json(request).await
   }
 
-  pub async fn delete_terminal(&self, terminal_id: &str) -> Result<(), RestError> {
+  async fn delete_terminal(&self, terminal_id: &str) -> Result<(), RestError> {
     let url = self.build_url(&[
       Segment::literal("api"),
       Segment::literal("terminals"),
@@ -293,7 +391,7 @@ impl JupyterRestClient {
     self.send_empty(request).await
   }
 
-  pub async fn me(&self, params: Option<&PermissionsQueryParam>) -> Result<MeResponse, RestError> {
+  async fn me(&self, params: Option<&PermissionsQueryParam>) -> Result<MeResponse, RestError> {
     let url = self.build_url(&[Segment::literal("api"), Segment::literal("me")])?;
     let mut request = self.request(Method::GET, url);
     if let Some(query) = params {
@@ -302,16 +400,85 @@ impl JupyterRestClient {
     self.send_json(request).await
   }
 
-  pub async fn status(&self) -> Result<APIStatus, RestError> {
+  async fn status(&self) -> Result<APIStatus, RestError> {
     let url = self.build_url(&[Segment::literal("api"), Segment::literal("status")])?;
     let request = self.request(Method::GET, url);
     self.send_json(request).await
   }
 
-  pub async fn download_spec(&self) -> Result<String, RestError> {
+  async fn download_spec(&self) -> Result<String, RestError> {
     let url = self.build_url(&[Segment::literal("api"), Segment::literal("spec.yaml")])?;
     let request = self.request(Method::GET, url);
     let response = self.send(request).await?;
     response.text().await.map_err(RestError::Http)
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use crate::api::client::tests::_setup_client;
+
+  use super::*;
+
+  #[tokio::test]
+  async fn test_status() {
+    let client = _setup_client();
+    let status = client.status().await.unwrap();
+    println!("API Status: {:?}", status);
+    assert!(status.started.is_some());
+  }
+
+  #[tokio::test]
+  async fn test_server_version() {
+    let client = _setup_client();
+    let version = client.server_version().await.unwrap();
+    println!("Server Version: {:?}", version);
+    assert!(version.version.len() > 0);
+  }
+
+  #[tokio::test]
+  async fn test_me() {
+    let client = _setup_client();
+    let me = client.me(None).await.unwrap();
+    println!("Me: {:?}", me);
+    assert!(me.identity.is_some());
+  }
+
+  #[tokio::test]
+  async fn test_list_kernels() {
+    let client = _setup_client();
+    let kernels = client.list_kernels().await.unwrap();
+    println!("Kernels: {:?}", kernels);
+  }
+
+  #[tokio::test]
+  async fn test_kernel_specs() {
+    let client = _setup_client();
+    let specs = client.kernel_specs().await.unwrap();
+    println!("Kernel Specs: {:?}", specs);
+    assert!(specs.default.is_some());
+  }
+
+  #[tokio::test]
+  async fn test_list_sessions() {
+    let client = _setup_client();
+    let sessions = client.list_sessions().await.unwrap();
+    println!("Sessions: {:?}", sessions);
+  }
+
+  #[tokio::test]
+  async fn test_list_contents() {
+    let client = _setup_client();
+    let contents = client.get_contents("/Untitled Folder", None).await.unwrap();
+    println!("Contents: {:?}", contents);
+    assert!(contents.content_type == "directory");
+
+    let contents = client.get_contents("/hello.txt", Some(&ContentsGetParams { entry_type: None, format: None, content: Some(false), hash: Some(true) })).await.unwrap();
+    // assert!(contents.)
+    println!("Contents: {:?}", contents);
+    assert_eq!(contents.content_type, "file");
+    assert_eq!(contents.content, None);
+    assert!(contents.hash.is_some());
+    assert_eq!(contents.hash_algorithm.as_deref(), Some("sha256"));
   }
 }
