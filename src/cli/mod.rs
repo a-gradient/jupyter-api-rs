@@ -1,10 +1,27 @@
 use std::{fs, path::PathBuf};
 
 use anyhow::{Context, bail};
+use clap::{Parser, Subcommand};
 use reqwest::Url;
 use tracing::info;
 
 pub mod ftp;
+pub mod scp;
+
+#[derive(Parser, Debug)]
+#[command(name = "jupyter_shell", version, about = "Expose a Jupyter deployment over remote file protocols")]
+pub struct Cli {
+  #[command(subcommand)]
+  pub command: Command,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum Command {
+  #[command(about = "Expose a Jupyter deployment over FTP")]
+  Ftp(ftp::FtpArgs),
+  #[command(about = "Expose a Jupyter deployment over SCP")]
+  Scp(scp::ScpArgs),
+}
 
 #[derive(Debug)]
 pub struct TokenArgs {

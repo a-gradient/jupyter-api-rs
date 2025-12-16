@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::Context;
-use clap::{value_parser, ArgAction, Parser, ValueHint};
+use clap::{value_parser, ArgAction, Args, ValueHint};
 use jupyter_shell::{api::client::JupyterRestClient, fs::FsService, ftp};
 use reqwest::Url;
 use tracing::{info, warn};
@@ -65,8 +65,8 @@ pub(crate) async fn run(args: FtpArgs) -> anyhow::Result<()> {
   Ok(())
 }
 
-#[derive(Parser, Debug)]
-#[command(name = "jupyter_shell", version, about = "Expose a Jupyter deployment over FTP")]
+#[derive(Args, Debug)]
+#[command(about = "Expose a Jupyter deployment over FTP")]
 pub struct FtpArgs {
   #[arg(value_name = "JUPYTER_URL", help = "Full Jupyter URL (supports ?token=<value>)")]
   endpoint_url: Url,
