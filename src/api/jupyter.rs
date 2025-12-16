@@ -1,7 +1,7 @@
 use crate::api::{
   client::*, param::*, resp::*
 };
-use reqwest::Method;
+use reqwest::{Method, Response};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
@@ -416,12 +416,16 @@ impl JupyterApi for JupyterRestClient {
 
 #[async_trait::async_trait]
 pub trait JupyterLabApi {
-  async fn get_files(&self, path: &str, range: Option<(u64, Option<u64>)>) -> Result<Vec<u8>, RestError>;
+  async fn get_files_stream(&self, path: &str, range: Option<(u64, Option<u64>)>) -> Result<Response, RestError>;
+  async fn get_files(&self, path: &str, range: Option<(u64, Option<u64>)>) -> Result<Vec<u8>, RestError> {
+    let response = self.get_files_stream(path, range).await?;
+    response.bytes().await.map(|b| b.to_vec()).map_err(RestError::Http)
+  }
 }
 
 #[async_trait::async_trait]
 impl JupyterLabApi for JupyterRestClient {
-  async fn get_files(&self, path: &str, range: Option<(u64, Option<u64>)>) -> Result<Vec<u8>, RestError> {
+  async fn get_files_stream(&self, path: &str, range: Option<(u64, Option<u64>)>) -> Result<Response, RestError> {
     let url = self.build_url(&[
       Segment::literal("files"),
       Segment::path_allow_empty(path),
@@ -435,8 +439,7 @@ impl JupyterLabApi for JupyterRestClient {
     if !bytes_range.is_empty() {
       request = request.header("Range", bytes_range);
     }
-    let response = self.send(request).await?;
-    response.bytes().await.map(|b| b.to_vec()).map_err(RestError::Http)
+    self.send(request).await
   }
 }
 

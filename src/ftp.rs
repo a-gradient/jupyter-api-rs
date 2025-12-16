@@ -1,9 +1,7 @@
 use std::{
   fmt,
   path::{Component, Path, PathBuf},
-  pin::Pin,
   sync::Arc,
-  task::{Context, Poll},
   time::SystemTime,
 };
 
@@ -14,7 +12,7 @@ use libunftp::{
   ServerBuilder,
 };
 use reqwest::StatusCode;
-use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
+use tokio::io::{AsyncRead, AsyncReadExt};
 
 use crate::{
   api::client::RestError,
@@ -83,17 +81,12 @@ impl StorageBackend<DefaultUser> for FsStorage {
   ) -> Result<Box<dyn AsyncRead + Send + Sync + Unpin>, Error> {
     let target = normalize_request_path(path);
     debug!(%target, start = start_pos, "FTP file read requested");
-    let mut download = self.fs.download(&target).await.map_err(map_fs_error)?;
-    let offset = usize::try_from(start_pos).map_err(|_| Error::from(ErrorKind::LocalError))?;
-    if offset > download.bytes.len() {
-      return Err(Error::from(ErrorKind::PermanentFileNotAvailable));
-    }
-    let data = if offset == 0 {
-      download.bytes
-    } else {
-      download.bytes.split_off(offset)
-    };
-    Ok(Box::new(VecReader::new(data)))
+    let download = self
+      .fs
+      .download_reader_from(&target, start_pos)
+      .await
+      .map_err(map_fs_error)?;
+    Ok(download.reader)
   }
 
   async fn put<P, R>(
@@ -313,42 +306,10 @@ fn map_rest_error(err: RestError) -> Error {
   }
 }
 
-struct VecReader {
-  data: Arc<[u8]>,
-  position: usize,
-}
-
-impl VecReader {
-  fn new(data: Vec<u8>) -> Self {
-    Self {
-      data: Arc::from(data),
-      position: 0,
-    }
-  }
-}
-
-impl AsyncRead for VecReader {
-  fn poll_read(
-    mut self: Pin<&mut Self>,
-    _cx: &mut Context<'_>,
-    buf: &mut ReadBuf<'_>,
-  ) -> Poll<Result<(), std::io::Error>> {
-    if self.position >= self.data.len() {
-      return Poll::Ready(Ok(()));
-    }
-    let remaining = &self.data[self.position..];
-    let len = remaining.len().min(buf.remaining());
-    buf.put_slice(&remaining[..len]);
-    self.position += len;
-    Poll::Ready(Ok(()))
-  }
-}
-
 #[cfg(test)]
 mod tests {
   use super::*;
   use chrono::Utc;
-  use tokio::io::AsyncReadExt;
 
   #[test]
   fn normalize_handles_relative_segments() {
@@ -386,13 +347,5 @@ mod tests {
     assert!(!file_meta.is_dir());
     assert!(file_meta.is_file());
     assert_eq!(file_meta.permissions().0, 0o555);
-  }
-
-  #[tokio::test]
-  async fn vec_reader_streams_all_bytes() {
-    let mut reader = VecReader::new(b"abc".to_vec());
-    let mut output = Vec::new();
-    reader.read_to_end(&mut output).await.unwrap();
-    assert_eq!(output, b"abc");
   }
 }

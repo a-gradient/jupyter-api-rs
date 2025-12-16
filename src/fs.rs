@@ -1,8 +1,13 @@
-use std::{fmt, sync::Arc};
+use std::{fmt, pin::Pin, sync::Arc};
+use std::io;
+use std::task::{Context, Poll};
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
+use tokio::io::{AsyncRead, ReadBuf};
+use tokio_util::io::StreamReader;
+use futures_util::TryStreamExt;
 
 use crate::api::{
   client::{JupyterRestClient, RestError}, jupyter::{JupyterApi, JupyterLabApi}, param::{ContentsEntryType, ContentsFormat, ContentsGetParams, RenameContentsModel, SaveContentsModel}, resp::{ContentValue, Contents}
@@ -133,7 +138,7 @@ impl FsService {
 
   /// Download a remote file/notebook and return its bytes along with metadata.
   #[tracing::instrument(skip(self), fields(path = %path))]
-  pub async fn _download_use_contents(&self, path: &str) -> Result<FileDownload, FsError> {
+  pub async fn _download_use_contents(&self, path: &str) -> Result<FileContent, FsError> {
     trace!("downloading via /api/contents endpoint");
     let mut params = ContentsGetParams::default();
     params.content = Some(true);
@@ -157,7 +162,7 @@ impl FsService {
     let bytes = decode_file_bytes(contents.format.as_deref(), payload)?;
     let entry = Entry::from(contents);
     trace!(remote_size = ?entry.size, "downloaded payload via contents endpoint");
-    Ok(FileDownload { entry, bytes })
+    Ok(FileContent { entry, bytes })
   }
 
   #[tracing::instrument(skip(self), fields(path = %path, range = ?range))]
@@ -166,17 +171,72 @@ impl FsService {
     Ok(self.inner.get_files(path, range).await?)
   }
 
+  #[tracing::instrument(skip(self), fields(path = %path, range = ?range))]
+  async fn _download_use_files_reader(
+    &self,
+    path: &str,
+    range: Option<(u64, Option<u64>)>,
+  ) -> Result<Box<dyn AsyncRead + Send + Sync + Unpin>, FsError> {
+    trace!("streaming via /files endpoint");
+    let response = self.inner.get_files_stream(path, range).await?;
+    let stream = response
+      .bytes_stream()
+      .map_err(|err| io::Error::new(io::ErrorKind::Other, err));
+    Ok(Box::new(StreamReader::new(stream)))
+  }
+
   #[tracing::instrument(skip(self), fields(path = %path))]
-  pub async fn download(&self, path: &str) -> Result<FileDownload, FsError> {
+  pub async fn download(&self, path: &str) -> Result<FileContent, FsError> {
     debug!("fs: download {}", path);
     trace!("attempting optimized /files download");
     if let Ok(payload) = self._download_use_files(path, None).await {
       let entry = self.metadata(path).await?;
       trace!("downloaded via /files endpoint");
-      return Ok(FileDownload { entry, bytes: payload } );
+      return Ok(FileContent { entry, bytes: payload } );
     }
     trace!("falling back to contents fallback download");
     self._download_use_contents(path).await
+  }
+
+  #[tracing::instrument(skip(self), fields(path = %path))]
+  pub async fn download_reader(&self, path: &str) -> Result<FileDownload, FsError> {
+    self.download_reader_from(path, 0).await
+  }
+
+  #[tracing::instrument(skip(self), fields(path = %path, start = start_pos))]
+  pub async fn download_reader_from(&self, path: &str, start_pos: u64) -> Result<FileDownload, FsError> {
+    debug!(start = start_pos, "fs: download_reader {}", path);
+    let range = (start_pos > 0).then_some((start_pos, None));
+    match self._download_use_files_reader(path, range).await {
+      Ok(reader) => {
+        let entry = self.metadata(path).await?;
+        trace!("streamed via /files endpoint");
+        Ok(FileDownload { entry, reader })
+      }
+      Err(err) => {
+        trace!(error = ?err, "streaming via /files failed; falling back to contents endpoint");
+        let FileContent { entry, mut bytes } = self._download_use_contents(path).await?;
+        if start_pos > 0 {
+          let offset = usize::try_from(start_pos).map_err(|_| {
+            FsError::InvalidPayload(format!(
+              "requested offset {} exceeds platform capacity for {}",
+              start_pos, path
+            ))
+          })?;
+          if offset > bytes.len() {
+            return Err(FsError::InvalidPayload(format!(
+              "requested offset {} exceeds file length {} for {}",
+              start_pos,
+              bytes.len(),
+              path
+            )));
+          }
+          bytes.drain(0..offset);
+        }
+        let reader = boxed_vec_reader(bytes);
+        Ok(FileDownload { entry, reader })
+      }
+    }
   }
 
   /// Compute the SHA-256 hash for a file by downloading its bytes first.
@@ -332,8 +392,48 @@ impl Entry {
   }
 }
 
-#[derive(Debug, Clone)]
 pub struct FileDownload {
+  pub entry: Entry,
+  pub reader: Box<dyn AsyncRead + Unpin + Send + Sync>,
+}
+
+fn boxed_vec_reader(bytes: Vec<u8>) -> Box<dyn AsyncRead + Send + Sync + Unpin> {
+  Box::new(VecReader::new(bytes))
+}
+
+struct VecReader {
+  data: Arc<[u8]>,
+  position: usize,
+}
+
+impl VecReader {
+  fn new(bytes: Vec<u8>) -> Self {
+    Self {
+      data: Arc::from(bytes),
+      position: 0,
+    }
+  }
+}
+
+impl AsyncRead for VecReader {
+  fn poll_read(
+    mut self: Pin<&mut Self>,
+    _cx: &mut Context<'_>,
+    buf: &mut ReadBuf<'_>,
+  ) -> Poll<Result<(), std::io::Error>> {
+    if self.position >= self.data.len() {
+      return Poll::Ready(Ok(()));
+    }
+    let remaining = &self.data[self.position..];
+    let len = remaining.len().min(buf.remaining());
+    buf.put_slice(&remaining[..len]);
+    self.position += len;
+    Poll::Ready(Ok(()))
+  }
+}
+
+#[derive(Debug, Clone)]
+pub struct FileContent {
   pub entry: Entry,
   pub bytes: Vec<u8>,
 }
