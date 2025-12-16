@@ -184,9 +184,9 @@ impl FsService {
   }
 
   /// Remove a directory after verifying the target is not a plain file.
-  pub async fn rmdir(&self, path: &str) -> Result<(), FsError> {
+  pub async fn rmdir(&self, path: &str, recursive: bool) -> Result<(), FsError> {
     let mut params = ContentsGetParams::default();
-    params.content = Some(false);
+    params.content = Some(!recursive);
     let metadata = self
       .inner
       .get_contents(path, Some(&params))
@@ -194,6 +194,12 @@ impl FsService {
       .map_err(FsError::from)?;
     if !EntryKind::from_content_type(&metadata.content_type).is_directory() {
       return Err(FsError::NotADirectory(metadata.path));
+    }
+    if let Some(ContentValue::Contents(v)) = metadata.content && v.len() > 0 {
+      return Err(FsError::InvalidPayload(format!(
+        "directory {} is not empty",
+        metadata.path
+      )));
     }
     self
       .inner
@@ -431,5 +437,29 @@ mod tests {
     let download = fs.download("chunked.txt").await.unwrap();
     assert_eq!(download.bytes, data);
     fs.rm("chunked.txt").await.unwrap();
+  }
+
+  #[tokio::test]
+  async fn test_dir() {
+    let client = crate::api::client::tests::_setup_client();
+    let fs = FsService::new(Arc::new(client));
+
+    fs.rmdir("test_dir", true).await.ok();
+    let dir_entry = fs.mkdir("test_dir").await.unwrap();
+    assert!(dir_entry.kind.is_directory());
+
+    let metadata = fs.metadata("test_dir").await.unwrap();
+    assert!(metadata.kind.is_directory());
+
+    let file_entry = fs.upload("test_dir/file.txt", "hello").await.unwrap();
+    assert!(file_entry.kind.is_file_like());
+
+    let dir_listing = fs.ls("test_dir").await.unwrap();
+    assert_eq!(dir_listing.len(), 1);
+    assert_eq!(dir_listing[0].name, "file.txt");
+
+    fs.rmdir("test_dir", false).await.unwrap_err(); // should fail because not empty
+    fs.rm("test_dir/file.txt").await.unwrap();
+    fs.rmdir("test_dir", false).await.unwrap(); // should succeed now
   }
 }

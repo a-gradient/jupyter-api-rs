@@ -155,7 +155,7 @@ impl StorageBackend<DefaultUser> for FsStorage {
     path: P,
   ) -> Result<(), Error> {
     let target = normalize_request_path(path);
-    self.fs.rmdir(&target).await.map_err(map_fs_error)
+    self.fs.rmdir(&target, false).await.map_err(map_fs_error)
   }
 
   async fn cwd<P: AsRef<Path> + Send + fmt::Debug>(
