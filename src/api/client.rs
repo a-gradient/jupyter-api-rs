@@ -1,19 +1,11 @@
-use crate::api::{
-  param::*,
-  resp::{
-    APIStatus, Checkpoint, Contents, Kernel, KernelSpecsResponse, MeResponse, Session,
-    Terminal,
-  },
-};
 use reqwest::{
   header::{HeaderValue, AUTHORIZATION},
   Client, ClientBuilder, Method, RequestBuilder, Response, StatusCode, Url,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
 use std::{fmt, time::Duration};
-use uuid::Uuid;
+
 pub struct JupyterRestClient {
   client: Client,
   base_url: Url,
@@ -100,316 +92,7 @@ impl JupyterRestClient {
     &self.client
   }
 
-  pub async fn server_version(&self) -> Result<ServerVersion, RestError> {
-    let url = self.build_url(&[Segment::literal("api"), Segment::literal("")])?;
-    let request = self.request(Method::GET, url);
-    self.send_json(request).await
-  }
-
-  pub async fn get_contents(
-    &self,
-    path: &str,
-    params: Option<&ContentsGetParams>,
-  ) -> Result<Contents, RestError> {
-    let url =
-      self.build_url(&[Segment::literal("api"), Segment::literal("contents"), Segment::path_allow_empty(path)])?;
-    let mut request = self.request(Method::GET, url);
-    if let Some(query) = params {
-      request = request.query(query);
-    }
-    self.send_json(request).await
-  }
-
-  pub async fn create_contents(
-    &self,
-    path: &str,
-    model: &CreateContentsModel,
-  ) -> Result<Contents, RestError> {
-    let url =
-      self.build_url(&[Segment::literal("api"), Segment::literal("contents"), Segment::path_allow_empty(path)])?;
-    let request = self.request(Method::POST, url).json(model);
-    self.send_json(request).await
-  }
-
-  pub async fn rename_contents(
-    &self,
-    path: &str,
-    rename: &RenameContentsModel,
-  ) -> Result<Contents, RestError> {
-    let url =
-      self.build_url(&[Segment::literal("api"), Segment::literal("contents"), Segment::path(path)])?;
-    let request = self.request(Method::PATCH, url).json(rename);
-    self.send_json(request).await
-  }
-
-  pub async fn save_contents(
-    &self,
-    path: &str,
-    model: &SaveContentsModel,
-  ) -> Result<Contents, RestError> {
-    let url =
-      self.build_url(&[Segment::literal("api"), Segment::literal("contents"), Segment::path(path)])?;
-    let request = self.request(Method::PUT, url).json(model);
-    self.send_json(request).await
-  }
-
-  pub async fn delete_contents(&self, path: &str) -> Result<(), RestError> {
-    let url =
-      self.build_url(&[Segment::literal("api"), Segment::literal("contents"), Segment::path(path)])?;
-    let request = self.request(Method::DELETE, url);
-    self.send_empty(request).await
-  }
-
-  pub async fn list_checkpoints(&self, path: &str) -> Result<Vec<Checkpoint>, RestError> {
-    let url = self.build_url(&[
-      Segment::literal("api"),
-      Segment::literal("contents"),
-      Segment::path(path),
-      Segment::literal("checkpoints"),
-    ])?;
-    let request = self.request(Method::GET, url);
-    self.send_json(request).await
-  }
-
-  pub async fn create_checkpoint(&self, path: &str) -> Result<Checkpoint, RestError> {
-    let url = self.build_url(&[
-      Segment::literal("api"),
-      Segment::literal("contents"),
-      Segment::path(path),
-      Segment::literal("checkpoints"),
-    ])?;
-    let request = self.request(Method::POST, url);
-    self.send_json(request).await
-  }
-
-  pub async fn restore_checkpoint(
-    &self,
-    path: &str,
-    checkpoint_id: &str,
-  ) -> Result<(), RestError> {
-    let url = self.build_url(&[
-      Segment::literal("api"),
-      Segment::literal("contents"),
-      Segment::path(path),
-      Segment::literal("checkpoints"),
-      Segment::literal(checkpoint_id.to_string()),
-    ])?;
-    let request = self.request(Method::POST, url);
-    self.send_empty(request).await
-  }
-
-  pub async fn delete_checkpoint(
-    &self,
-    path: &str,
-    checkpoint_id: &str,
-  ) -> Result<(), RestError> {
-    let url = self.build_url(&[
-      Segment::literal("api"),
-      Segment::literal("contents"),
-      Segment::path(path),
-      Segment::literal("checkpoints"),
-      Segment::literal(checkpoint_id.to_string()),
-    ])?;
-    let request = self.request(Method::DELETE, url);
-    self.send_empty(request).await
-  }
-
-  pub async fn get_session(&self, session_id: Uuid) -> Result<Session, RestError> {
-    let session = session_id.to_string();
-    let url = self.build_url(&[
-      Segment::literal("api"),
-      Segment::literal("sessions"),
-      Segment::literal(session),
-    ])?;
-    let request = self.request(Method::GET, url);
-    self.send_json(request).await
-  }
-
-  pub async fn update_session(
-    &self,
-    session_id: Uuid,
-    session: &Session,
-  ) -> Result<Session, RestError> {
-    let session_id = session_id.to_string();
-    let url = self.build_url(&[
-      Segment::literal("api"),
-      Segment::literal("sessions"),
-      Segment::literal(session_id),
-    ])?;
-    let request = self.request(Method::PATCH, url).json(session);
-    self.send_json(request).await
-  }
-
-  pub async fn delete_session(&self, session_id: Uuid) -> Result<(), RestError> {
-    let session = session_id.to_string();
-    let url = self.build_url(&[
-      Segment::literal("api"),
-      Segment::literal("sessions"),
-      Segment::literal(session),
-    ])?;
-    let request = self.request(Method::DELETE, url);
-    self.send_empty(request).await
-  }
-
-  pub async fn list_sessions(&self) -> Result<Vec<Session>, RestError> {
-    let url = self.build_url(&[Segment::literal("api"), Segment::literal("sessions")])?;
-    let request = self.request(Method::GET, url);
-    self.send_json(request).await
-  }
-
-  pub async fn create_session(&self, session: &Session) -> Result<Session, RestError> {
-    let url = self.build_url(&[Segment::literal("api"), Segment::literal("sessions")])?;
-    let request = self.request(Method::POST, url).json(session);
-    self.send_json(request).await
-  }
-
-  pub async fn list_kernels(&self) -> Result<Vec<Kernel>, RestError> {
-    let url = self.build_url(&[Segment::literal("api"), Segment::literal("kernels")])?;
-    let request = self.request(Method::GET, url);
-    self.send_json(request).await
-  }
-
-  pub async fn start_kernel(&self, options: &KernelStartOptions) -> Result<Kernel, RestError> {
-    let url = self.build_url(&[Segment::literal("api"), Segment::literal("kernels")])?;
-    let request = self.request(Method::POST, url).json(options);
-    self.send_json(request).await
-  }
-
-  pub async fn get_kernel(&self, kernel_id: Uuid) -> Result<Kernel, RestError> {
-    let kernel = kernel_id.to_string();
-    let url = self.build_url(&[
-      Segment::literal("api"),
-      Segment::literal("kernels"),
-      Segment::literal(kernel),
-    ])?;
-    let request = self.request(Method::GET, url);
-    self.send_json(request).await
-  }
-
-  pub async fn delete_kernel(&self, kernel_id: Uuid) -> Result<(), RestError> {
-    let kernel = kernel_id.to_string();
-    let url = self.build_url(&[
-      Segment::literal("api"),
-      Segment::literal("kernels"),
-      Segment::literal(kernel),
-    ])?;
-    let request = self.request(Method::DELETE, url);
-    self.send_empty(request).await
-  }
-
-  pub async fn interrupt_kernel(&self, kernel_id: Uuid) -> Result<(), RestError> {
-    let kernel = kernel_id.to_string();
-    let url = self.build_url(&[
-      Segment::literal("api"),
-      Segment::literal("kernels"),
-      Segment::literal(kernel),
-      Segment::literal("interrupt"),
-    ])?;
-    let request = self.request(Method::POST, url);
-    self.send_empty(request).await
-  }
-
-  pub async fn restart_kernel(&self, kernel_id: Uuid) -> Result<Kernel, RestError> {
-    let kernel = kernel_id.to_string();
-    let url = self.build_url(&[
-      Segment::literal("api"),
-      Segment::literal("kernels"),
-      Segment::literal(kernel),
-      Segment::literal("restart"),
-    ])?;
-    let request = self.request(Method::POST, url);
-    self.send_json(request).await
-  }
-
-  pub async fn kernel_specs(&self) -> Result<KernelSpecsResponse, RestError> {
-    let url = self.build_url(&[Segment::literal("api"), Segment::literal("kernelspecs")])?;
-    let request = self.request(Method::GET, url);
-    self.send_json(request).await
-  }
-
-  pub async fn get_config_section(&self, section_name: &str) -> Result<Value, RestError> {
-    let url = self.build_url(&[
-      Segment::literal("api"),
-      Segment::literal("config"),
-      Segment::literal(section_name.to_string()),
-    ])?;
-    let request = self.request(Method::GET, url);
-    self.send_json(request).await
-  }
-
-  pub async fn patch_config_section(
-    &self,
-    section_name: &str,
-    configuration: &ConfigPatchRequest,
-  ) -> Result<Value, RestError> {
-    let url = self.build_url(&[
-      Segment::literal("api"),
-      Segment::literal("config"),
-      Segment::literal(section_name.to_string()),
-    ])?;
-    let request = self.request(Method::PATCH, url).json(configuration);
-    self.send_json(request).await
-  }
-
-  pub async fn list_terminals(&self) -> Result<Vec<Terminal>, RestError> {
-    let url = self.build_url(&[Segment::literal("api"), Segment::literal("terminals")])?;
-    let request = self.request(Method::GET, url);
-    self.send_json(request).await
-  }
-
-  pub async fn create_terminal(&self, name: Option<&str>) -> Result<Terminal, RestError> {
-    let url = self.build_url(&[Segment::literal("api"), Segment::literal("terminals")])?;
-    let payload = match name {
-      Some(value) => json!({ "name": value }),
-      None => json!({}),
-    };
-    let request = self.request(Method::POST, url).json(&payload);
-    self.send_json(request).await
-  }
-
-  pub async fn get_terminal(&self, terminal_id: &str) -> Result<Terminal, RestError> {
-    let url = self.build_url(&[
-      Segment::literal("api"),
-      Segment::literal("terminals"),
-      Segment::literal(terminal_id.to_string()),
-    ])?;
-    let request = self.request(Method::GET, url);
-    self.send_json(request).await
-  }
-
-  pub async fn delete_terminal(&self, terminal_id: &str) -> Result<(), RestError> {
-    let url = self.build_url(&[
-      Segment::literal("api"),
-      Segment::literal("terminals"),
-      Segment::literal(terminal_id.to_string()),
-    ])?;
-    let request = self.request(Method::DELETE, url);
-    self.send_empty(request).await
-  }
-
-  pub async fn me(&self, params: Option<&PermissionsQueryParam>) -> Result<MeResponse, RestError> {
-    let url = self.build_url(&[Segment::literal("api"), Segment::literal("me")])?;
-    let mut request = self.request(Method::GET, url);
-    if let Some(query) = params {
-      request = request.query(query);
-    }
-    self.send_json(request).await
-  }
-
-  pub async fn status(&self) -> Result<APIStatus, RestError> {
-    let url = self.build_url(&[Segment::literal("api"), Segment::literal("status")])?;
-    let request = self.request(Method::GET, url);
-    self.send_json(request).await
-  }
-
-  pub async fn download_spec(&self) -> Result<String, RestError> {
-    let url = self.build_url(&[Segment::literal("api"), Segment::literal("spec.yaml")])?;
-    let request = self.request(Method::GET, url);
-    let response = self.send(request).await?;
-    response.text().await.map_err(RestError::Http)
-  }
-
-  fn request(&self, method: Method, url: Url) -> RequestBuilder {
+  pub(super) fn request(&self, method: Method, url: Url) -> RequestBuilder {
     let request = self.client.request(method, url);
     match &self.auth_header {
       Some(header) => request.header(AUTHORIZATION, header.clone()),
@@ -417,7 +100,7 @@ impl JupyterRestClient {
     }
   }
 
-  async fn send_json<T>(&self, request: RequestBuilder) -> Result<T, RestError>
+  pub(super) async fn send_json<T>(&self, request: RequestBuilder) -> Result<T, RestError>
   where
     T: DeserializeOwned,
   {
@@ -425,12 +108,12 @@ impl JupyterRestClient {
     response.json::<T>().await.map_err(RestError::Http)
   }
 
-  async fn send_empty(&self, request: RequestBuilder) -> Result<(), RestError> {
+  pub(super) async fn send_empty(&self, request: RequestBuilder) -> Result<(), RestError> {
     self.send(request).await?;
     Ok(())
   }
 
-  async fn send(&self, request: RequestBuilder) -> Result<Response, RestError> {
+  pub(super) async fn send(&self, request: RequestBuilder) -> Result<Response, RestError> {
     let response = request.send().await.map_err(RestError::Http)?;
     if response.status().is_success() {
       Ok(response)
@@ -441,7 +124,7 @@ impl JupyterRestClient {
     }
   }
 
-  fn build_url(&self, segments: &[Segment]) -> Result<Url, RestError> {
+  pub(super) fn build_url(&self, segments: &[Segment]) -> Result<Url, RestError> {
     let mut url = self.base_url.clone();
     {
       let mut parts = url
@@ -547,7 +230,7 @@ fn build_token_header(token: &str) -> Result<HeaderValue, RestError> {
 }
 
 #[derive(Debug, Clone)]
-enum Segment {
+pub(super) enum Segment {
   Literal(String),
   Path {
     value: String,
@@ -556,18 +239,18 @@ enum Segment {
 }
 
 impl Segment {
-  fn literal(value: impl Into<String>) -> Self {
+  pub fn literal(value: impl Into<String>) -> Self {
     Segment::Literal(value.into())
   }
 
-  fn path(value: impl Into<String>) -> Self {
+  pub fn path(value: impl Into<String>) -> Self {
     Segment::Path {
       value: value.into(),
       keep_trailing_slash_if_empty: false,
     }
   }
 
-  fn path_allow_empty(value: impl Into<String>) -> Self {
+  pub fn path_allow_empty(value: impl Into<String>) -> Self {
     Segment::Path {
       value: value.into(),
       keep_trailing_slash_if_empty: true,
@@ -577,6 +260,8 @@ impl Segment {
 
 #[cfg(test)]
 pub(crate) mod tests {
+  use crate::api::param::ContentsGetParams;
+
   use super::*;
 
   pub(crate) fn _setup_client() -> JupyterRestClient {

@@ -411,17 +411,17 @@ mod tests {
     let client = crate::api::client::tests::_setup_client();
     let fs = FsService::new(Arc::new(client));
     fs.rm("1.txt").await.ok();
-    let result = fs.ls("/").await.unwrap();
+    let result = fs.ls("/Untitled Folder").await.unwrap();
     println!("Directory listing: {:?}", result.iter().map(|e| &e.name).collect::<Vec<_>>());
-    let entry = fs.upload("1.txt", "123").await.unwrap();
+    let entry = fs.upload("Untitled Folder/1.txt", "123").await.unwrap();
     println!("Uploaded entry: {:?}", entry);
-    let download = fs.download("1.txt").await.unwrap();
+    let download = fs.download("Untitled Folder/1.txt").await.unwrap();
     println!("Downloaded entry: {:?}", download);
-    let entries2 = fs.ls("/").await.unwrap();
+    let entries2 = fs.ls("/Untitled Folder").await.unwrap();
     assert_eq!(entries2.len(), result.len() + 1);
     assert!(entries2.iter().any(|e| e.name == "1.txt"));
-    fs.rm("1.txt").await.unwrap();
-    let entries2 = fs.ls("/").await.unwrap();
+    fs.rm("Untitled Folder/1.txt").await.unwrap();
+    let entries2 = fs.ls("/Untitled Folder").await.unwrap();
     assert_eq!(entries2.len(), result.len());
   }
 
