@@ -13,7 +13,6 @@ use reqwest::Url;
 use tracing::{info, warn};
 
 const FTP_BIND_ADDR: &str = "0.0.0.0:8021";
-const DEFAULT_HTTP_TIMEOUT_SECS: u64 = 30;
 const APP_USER_AGENT: &str = concat!("jupyter-shell/", env!("CARGO_PKG_VERSION"));
 
 #[tokio::main]
@@ -23,9 +22,11 @@ async fn main() -> anyhow::Result<()> {
   let base_url = derive_base_url(&cli)?;
   let token = resolve_token(&cli)?;
 
-  let mut builder = JupyterRestClient::builder(base_url.as_str())?
-    .timeout(Duration::from_secs(cli.http_timeout_secs))
-    .user_agent(APP_USER_AGENT);
+  let mut builder = JupyterRestClient::builder(base_url.as_str())?;
+  if let Some(timeout_secs) = cli.http_timeout_secs {
+    builder = builder.timeout(Duration::from_secs(timeout_secs));
+  }
+  builder = builder.user_agent(APP_USER_AGENT);
 
   if cli.accept_invalid_certs {
     builder = builder.danger_accept_invalid_certs(true);
@@ -174,8 +175,8 @@ struct Cli {
   bind: SocketAddr,
   #[arg(short = 'p', long, value_name = "PORT", env = "JUPYTER_SHELL_BIND_PORT", help = "Port to bind the FTP server to (overrides --bind)")]
   bind_port: Option<u16>,
-  #[arg(long, value_name = "SECONDS", env = "JUPYTER_SHELL_HTTP_TIMEOUT", default_value_t = DEFAULT_HTTP_TIMEOUT_SECS, value_parser = value_parser!(u64).range(1..=300), help = "HTTP client timeout in seconds")]
-  http_timeout_secs: u64,
+  #[arg(long = "timeout", value_name = "SECONDS", env = "JUPYTER_SHELL_HTTP_TIMEOUT", value_parser = value_parser!(u64).range(1..=3600), help = "HTTP client timeout in seconds")]
+  http_timeout_secs: Option<u64>,
   #[arg(long, action = ArgAction::SetTrue, env = "JUPYTER_SHELL_ACCEPT_INVALID_CERTS", help = "Disable TLS certificate verification for the Jupyter endpoint")]
   accept_invalid_certs: bool,
   #[arg(long, value_name = "PATH", env = "JUPYTER_SHELL_API_BASE_PATH", help = "Override the API base path instead of auto-detecting it")]
