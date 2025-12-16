@@ -10,7 +10,14 @@ wheels/
 .venv
 uv.lock
 .secret
+.ipynb_checkpoints
 
+# tmp
+/tmp/*
+!/tmp/hello.txt
+!/tmp/code.zip
+!/tmp/Untitled.ipynb
+!/tmp/Untitled Folder/.keep
 
 # Added by cargo
 
