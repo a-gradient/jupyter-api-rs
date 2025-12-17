@@ -421,6 +421,15 @@ pub trait JupyterLabApi {
     let response = self.get_files_stream(path, range).await?;
     response.bytes().await.map(|b| b.to_vec()).map_err(RestError::Http)
   }
+
+  /// List all JupyterLab workspaces.
+  ///
+  /// JupyterLab stores layout/user-state in workspaces, typically under `/lab/api/workspaces`.
+  /// The payload is not strictly version-stable, so we return raw JSON.
+  async fn list_workspaces(&self) -> Result<Workspaces, RestError>;
+
+  /// Fetch a single JupyterLab workspace by id.
+  async fn get_workspace(&self, workspace_id: &str) -> Result<Workspace, RestError>;
 }
 
 #[async_trait::async_trait]
@@ -440,6 +449,27 @@ impl JupyterLabApi for JupyterRestClient {
       request = request.header("Range", bytes_range);
     }
     self.send(request).await
+  }
+
+  async fn list_workspaces(&self) -> Result<Workspaces, RestError> {
+    let url = self.build_url(&[
+      Segment::literal("lab"),
+      Segment::literal("api"),
+      Segment::literal("workspaces"),
+    ])?;
+    let request = self.request(Method::GET, url);
+    self.send_json::<WorkspacesResp>(request).await.map(WorkspacesResp::inner)
+  }
+
+  async fn get_workspace(&self, workspace_id: &str) -> Result<Workspace, RestError> {
+    let url = self.build_url(&[
+      Segment::literal("lab"),
+      Segment::literal("api"),
+      Segment::literal("workspaces"),
+      Segment::literal(workspace_id.to_string()),
+    ])?;
+    let request = self.request(Method::GET, url);
+    self.send_json(request).await
   }
 }
 

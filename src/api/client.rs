@@ -6,6 +6,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::{fmt, time::Duration};
 
+#[derive(Debug)]
 pub struct JupyterRestClient {
   client: Client,
   base_url: Url,

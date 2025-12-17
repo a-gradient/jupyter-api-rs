@@ -160,6 +160,46 @@ pub struct Terminal {
   pub last_activity: Option<chrono::DateTime<chrono::Utc>>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspacesResp {
+  Workspaces(Workspaces),
+}
+
+impl WorkspacesResp {
+  pub fn inner(self) -> Workspaces {
+    let Self::Workspaces(v) = self;
+    v
+  }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Workspaces {
+  pub ids: Vec<String>,
+  pub values: Vec<Workspace>,
+}
+
+impl From<Workspaces> for WorkspacesResp {
+  fn from(value: Workspaces) -> Self {
+    Self::Workspaces(value)
+  }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Workspace {
+  pub data: serde_json::Value,
+  pub metadata: WorkspaceMetadata,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WorkspaceMetadata {
+  id: String,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub last_modified: Option<chrono::DateTime<chrono::Utc>>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub created: Option<chrono::DateTime<chrono::Utc>>,
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -204,5 +244,12 @@ mod tests {
     let json_data = include_str!("../../samples/[GET]status.json");
     let status: APIStatus = serde_json::from_str(json_data).unwrap();
     println!("{:#?}", status);
+  }
+
+  #[test]
+  fn test_workspace_json() {
+    let json_data = include_str!("../../samples/[GET]lab__workspaces.json");
+    let workspaces: WorkspacesResp = serde_json::from_str(json_data).unwrap();
+    println!("{:#?}", workspaces);
   }
 }
