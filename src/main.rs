@@ -33,6 +33,11 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("SCP command exited with an error")?
     }
+    cli::Command::Ssh(args) => {
+      cli::ssh::run(args)
+        .await
+        .context("SSH command exited with an error")?
+    }
   }
   Ok(())
 }

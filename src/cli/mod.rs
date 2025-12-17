@@ -9,6 +9,7 @@ use tracing::{info, warn};
 #[cfg(feature = "ftp")]
 pub mod ftp;
 pub mod scp;
+pub mod ssh;
 
 pub(crate) const APP_USER_AGENT: &str = concat!("jupyter-shell/", env!("CARGO_PKG_VERSION"));
 pub(crate) const DEFAULT_JUPYTER_URL: &str = "http://localhost:8888/";
@@ -27,6 +28,8 @@ pub enum Command {
   Ftp(ftp::FtpArgs),
   #[command(about = "Expose a Jupyter deployment over SCP")]
   Scp(scp::ScpArgs),
+  #[command(about = "Open an interactive terminal session over WebSockets")]
+  Ssh(ssh::SshArgs),
 }
 
 #[derive(Debug)]
