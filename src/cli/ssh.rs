@@ -1,6 +1,6 @@
-use std::{io::IsTerminal, path::PathBuf};
+use std::{io::IsTerminal, path::PathBuf, time::Duration};
 
-use anyhow::{anyhow, Context};
+use anyhow::{anyhow, bail, Context};
 use clap::{value_parser, ArgAction, Args, ValueHint};
 use crossterm::terminal;
 use futures_util::StreamExt;
@@ -45,9 +45,32 @@ pub struct SshArgs {
   keep_terminal: bool,
   #[arg(long, action = ArgAction::SetTrue, help = "Do not place the local TTY into raw mode")]
   no_raw: bool,
+
+  #[arg(
+    long = "call-timeout",
+    value_name = "SECONDS",
+    env = "JUPYTER_SHELL_SSH_CALL_TIMEOUT",
+    value_parser = value_parser!(u64).range(1..=3600),
+    help = "Timeout in seconds for one-line command execution (only used when a command is provided)"
+  )]
+  call_timeout_secs: Option<u64>,
+
+  #[arg(
+    value_name = "COMMAND",
+    num_args = 1..,
+    trailing_var_arg = true,
+    allow_hyphen_values = true,
+    help = "Run a single command (non-interactive). Example: jupyter_shell ssh --token-file .secret http://localhost:8888 -- ls -la"
+  )]
+  command: Vec<String>,
 }
 
 pub(crate) async fn run(args: SshArgs) -> anyhow::Result<()> {
+  let one_line = !args.command.is_empty();
+  if one_line && args.terminal.is_some() {
+    bail!("one-line mode does not support --terminal (it would close the existing terminal). Omit --terminal to run a command in a fresh terminal.");
+  }
+
   let token_args = TokenArgs {
     endpoint_url: args.endpoint_url,
     token: args.token,
@@ -76,6 +99,33 @@ pub(crate) async fn run(args: SshArgs) -> anyhow::Result<()> {
       (terminal.name, true)
     }
   };
+
+  if one_line {
+    let cmd = join_shell_command(&args.command);
+    let timeout = args
+      .call_timeout_secs
+      .map(Duration::from_secs)
+      .or(Some(Duration::from_secs(60)));
+
+    info!(%base_url, terminal = %terminal_name, created = created_terminal, "Running one-line command against Jupyter terminal");
+    let service = TerminalService::connect(client, &terminal_name, false)
+      .await
+      .with_context(|| format!("failed to connect to terminal {terminal_name}"))?;
+
+    let result = service
+      .call(cmd, timeout)
+      .await
+      .context("failed to run command")?;
+
+    print!("{}", result.stdout);
+
+    // Always best-effort cleanup for one-line mode.
+    if created_terminal && !args.keep_terminal {
+      let client = token_args.build_client()?;
+      client.delete_terminal(&terminal_name).await.ok();
+    }
+    return Ok(());
+  }
 
   info!(%base_url, terminal = %terminal_name, created = created_terminal, "Opening SSH session against Jupyter");
   let _raw_guard = RawModeGuard::new(!args.no_raw)?;
@@ -179,6 +229,48 @@ pub(crate) async fn run(args: SshArgs) -> anyhow::Result<()> {
   }
 
   Ok(())
+}
+
+fn join_shell_command(parts: &[String]) -> String {
+  if parts.is_empty() {
+    return String::new();
+  }
+  if parts.len() == 1 {
+    return parts[0].clone();
+  }
+  parts
+    .iter()
+    .map(|part| shell_escape_posix(part))
+    .collect::<Vec<_>>()
+    .join(" ")
+}
+
+fn shell_escape_posix(value: &str) -> String {
+  if value.is_empty() {
+    return "''".to_string();
+  }
+
+  let safe = value.bytes().all(|b| match b {
+    b'a'..=b'z'
+    | b'A'..=b'Z'
+    | b'0'..=b'9'
+    | b'_'
+    | b'-'
+    | b'.'
+    | b'/'
+    | b':'
+    | b'@'
+    | b'+'
+    | b','
+    | b'=' => true,
+    _ => false,
+  });
+  if safe {
+    return value.to_string();
+  }
+
+  let escaped = value.replace('\'', "'\\''");
+  format!("'{escaped}'")
 }
 
 async fn read_stdin(tx: mpsc::Sender<Vec<u8>>) {

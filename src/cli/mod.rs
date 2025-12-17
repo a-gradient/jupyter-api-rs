@@ -28,7 +28,7 @@ pub enum Command {
   Ftp(ftp::FtpArgs),
   #[command(about = "Expose a Jupyter deployment over SCP")]
   Scp(scp::ScpArgs),
-  #[command(about = "Open an interactive terminal session over WebSockets")]
+  #[command(about = "Open a terminal session over WebSockets (interactive or one-shot command)")]
   Ssh(ssh::SshArgs),
 }
 
