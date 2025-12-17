@@ -3,6 +3,8 @@ use futures_util::{
 };
 use reqwest_websocket::Message;
 use serde_json::json;
+use std::time::Duration;
+use reqwest::StatusCode;
 
 use crate::api::{client::{ClientError, JupyterLabClient}, jupyter::JupyterApi};
 
@@ -74,6 +76,14 @@ pub enum TerminalError {
   WebSocket(reqwest_websocket::Error),
   #[error("JSON error: {0}")]
   Json(serde_json::Error),
+  #[error("Timed out after {0:?}")]
+  Timeout(Duration),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerminalCallResult {
+  pub stdout: String,
+  pub disconnect_code: Option<i32>,
 }
 
 pub enum InputMessage {
@@ -128,14 +138,65 @@ impl TryFrom<serde_json::Value> for OutputMessage {
 }
 
 impl TerminalService {
+  /// Ensure a terminal exists and is retrievable via `get_terminal`.
+  ///
+  /// If `force` is true, a missing terminal will be created.
+  /// After creation, this will retry `get_terminal` up to `retry_count` times
+  /// to allow the server time to make the terminal visible.
+  pub async fn get(
+    client: &JupyterLabClient,
+    terminal_name: &str,
+    force: bool,
+    retry_count: usize,
+  ) -> Result<crate::api::resp::Terminal, TerminalError> {
+    let resolved_name = match client.get_terminal(terminal_name).await {
+      Ok(terminal) => terminal.name,
+      Err(ClientError::Api { status, .. }) if status == StatusCode::NOT_FOUND && force => {
+        let terminal = client
+          .create_terminal(Some(terminal_name))
+          .await
+          .map_err(TerminalError::Client)?;
+        terminal.name
+      }
+      Err(err) => return Err(TerminalError::Client(err)),
+    };
+
+    let mut attempt = 0usize;
+    loop {
+      match client.get_terminal(&resolved_name).await {
+        Ok(terminal) => return Ok(terminal),
+        Err(ClientError::Api { status, .. })
+          if status == StatusCode::NOT_FOUND && attempt < retry_count =>
+        {
+          // Exponential-ish backoff: 50ms, 100ms, 200ms... capped.
+          let exp = (attempt as u32).min(10);
+          let delay_ms = 50u64.saturating_mul(1u64 << exp);
+          attempt += 1;
+          if attempt < retry_count {
+            println!("Retrying to get terminal '{}' in {}ms...retry={}", terminal_name, delay_ms, retry_count - attempt);
+            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+          }
+        }
+        Err(err) => return Err(TerminalError::Client(err)),
+      }
+    }
+  }
+
   pub async fn connect(
     client: JupyterLabClient,
     terminal_name: &str,
+    force: bool,
   ) -> Result<TerminalService, TerminalError> {
-    let ws = client.connect_terminal(terminal_name).await.map_err(TerminalError::Client)?;
+    let terminal = Self::get(&client, terminal_name, force, 10).await?;
+
+    let ws = client
+      .connect_terminal(&terminal.name)
+      .await
+      .map_err(TerminalError::Client)?;
+
     Ok(TerminalService {
       client,
-      name: terminal_name.to_string(),
+      name: terminal.name,
       ws,
       buffer: Vec::new(),
     })
@@ -173,5 +234,103 @@ impl TerminalService {
       sink: TerminalInputSink { sink },
       stream: TerminalOutputStream { stream },
     }
+  }
+
+  /// Run a single command on this terminal, then request shell exit.
+  ///
+  /// This consumes the terminal connection. The returned output is whatever the terminal
+  /// emitted on stdout before disconnect.
+  pub async fn call(
+    self,
+    command: impl AsRef<str>,
+    timeout: Option<Duration>,
+  ) -> Result<TerminalCallResult, TerminalError> {
+    let mut service = self;
+
+    let raw = command.as_ref();
+    let mut cmd = raw.to_string();
+    if !cmd.ends_with('\n') {
+      cmd.push('\n');
+    }
+    service.send_message(InputMessage::Stdin(cmd)).await?;
+    service
+      .send_message(InputMessage::Stdin("exit\n".to_string()))
+      .await?;
+
+    let read_until_disconnect = async move {
+      let mut stdout = String::new();
+      let mut disconnect_code = None;
+      loop {
+        let Some(msg) = service.read_message().await? else {
+          break;
+        };
+        match msg {
+          OutputMessage::Init {} => {}
+          OutputMessage::Stdout(data) => stdout.push_str(&data),
+          OutputMessage::Disconnect(code) => {
+            disconnect_code = Some(code);
+            break;
+          }
+        }
+      }
+      Ok::<TerminalCallResult, TerminalError>(TerminalCallResult {
+        stdout,
+        disconnect_code,
+      })
+    };
+
+    match timeout {
+      Some(dur) => tokio::time::timeout(dur, read_until_disconnect)
+        .await
+        .map_err(|_| TerminalError::Timeout(dur))?,
+      None => read_until_disconnect.await,
+    }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use std::time::Duration;
+
+  use crate::api::{
+    client::tests::_setup_client,
+    jupyter::JupyterApi,
+  };
+
+  use super::TerminalService;
+
+  #[tokio::test]
+  async fn test_terminal_service_get_force_create() {
+    let client = _setup_client();
+    let terminal_name = format!("{}", 3024);
+
+    let terminal = TerminalService::get(&client, &terminal_name, true, 10)
+      .await
+      .unwrap();
+    assert_eq!(terminal.name, terminal_name);
+
+    // Clean up terminal resource
+    let client = _setup_client();
+    client.delete_terminal(&terminal_name).await.unwrap();
+  }
+
+  #[tokio::test]
+  async fn test_terminal_service_call_echo() {
+    let client = _setup_client();
+    let terminal_name = format!("{}", 3025);
+
+    let service = TerminalService::connect(client, &terminal_name, true).await.unwrap();
+    let created_name = service.name.clone();
+    let marker = "__JUPYTER_SHELL_CALL_TEST__";
+    let result = service
+      .call(format!("echo {marker}"), Some(Duration::from_secs(10)))
+      .await
+      .unwrap();
+
+    assert!(result.stdout.contains(marker), "stdout did not contain marker; stdout={:?}", result.stdout);
+
+    // Clean up terminal resource
+    let client = _setup_client();
+    client.delete_terminal(&created_name).await.ok();
   }
 }

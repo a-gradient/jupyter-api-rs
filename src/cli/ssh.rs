@@ -80,7 +80,7 @@ pub(crate) async fn run(args: SshArgs) -> anyhow::Result<()> {
   info!(%base_url, terminal = %terminal_name, created = created_terminal, "Opening SSH session against Jupyter");
   let _raw_guard = RawModeGuard::new(!args.no_raw)?;
 
-  let service = TerminalService::connect(client, &terminal_name)
+  let service = TerminalService::connect(client, &terminal_name, false)
     .await
     .with_context(|| format!("failed to connect to terminal {terminal_name}"))?;
   let TerminalSplit {
