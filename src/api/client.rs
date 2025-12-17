@@ -2,6 +2,7 @@ use reqwest::{
   header::{HeaderValue, AUTHORIZATION},
   Client, ClientBuilder, Method, RequestBuilder, Response, StatusCode, Url,
 };
+use reqwest_websocket::{RequestBuilderExt, UpgradeResponse};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::{fmt, time::Duration};
@@ -29,6 +30,7 @@ pub struct ServerVersion {
 pub enum ClientError {
   InvalidBaseUrl(String),
   Http(reqwest::Error),
+  Websocket(reqwest_websocket::Error),
   Api { status: StatusCode, message: String },
   InvalidHeader(String),
 }
@@ -38,6 +40,7 @@ impl fmt::Display for ClientError {
     match self {
       ClientError::InvalidBaseUrl(msg) => write!(f, "invalid base url: {msg}"),
       ClientError::Http(err) => write!(f, "http error: {err}"),
+      ClientError::Websocket(err) => write!(f, "websocket error: {err}"),
       ClientError::Api { status, message } => {
         if message.is_empty() {
           write!(f, "api error: {status}")
@@ -112,6 +115,25 @@ impl JupyterLabClient {
   pub(super) async fn send_empty(&self, request: RequestBuilder) -> Result<(), ClientError> {
     self.send(request).await?;
     Ok(())
+  }
+
+  pub(super) async fn send_ws(&self, request: RequestBuilder) -> Result<UpgradeResponse, ClientError> {
+    let (client, request) = request.build_split();
+    let mut request = request?;
+    let url = request.url_mut();
+    match url.scheme() {
+      "http" => url.set_scheme("ws"),
+      "https" => url.set_scheme("wss"),
+      _ => Err(()),
+    }.map_err(|_| ClientError::InvalidBaseUrl(format!("could not set_scheme from {url}")))?;
+    let request = RequestBuilder::from_parts(client, request);
+    let response = request.upgrade().send().await.map_err(ClientError::Websocket)?;
+    let status = response.status();
+    if status != StatusCode::SWITCHING_PROTOCOLS {
+      let message = response.into_inner().text().await.unwrap_or_default();
+      return Err(ClientError::Api { status, message });
+    }
+    Ok(response)
   }
 
   pub(super) async fn send(&self, request: RequestBuilder) -> Result<Response, ClientError> {
@@ -261,7 +283,9 @@ impl Segment {
 
 #[cfg(test)]
 pub(crate) mod tests {
-  use super::*;
+  use crate::api::jupyter::JupyterApi;
+
+use super::*;
 
   pub(crate) fn _setup_client() -> JupyterLabClient {
     JupyterLabClientBuilder::new("http://localhost:8888").unwrap()
@@ -279,5 +303,15 @@ pub(crate) mod tests {
       .build()
       .unwrap();
     assert_eq!(client.base_url().as_str(), "http://localhost:8888/");
+  }
+
+  #[tokio::test]
+  async fn test_terminal() {
+    let client = _setup_client();
+    let terminal = client.create_terminal(Some("test")).await.unwrap();
+    assert!(terminal.name == "test");
+    let socket = client.connect_terminal("test").await.unwrap();
+    client.delete_terminal("test").await.unwrap();
+    drop(socket);
   }
 }

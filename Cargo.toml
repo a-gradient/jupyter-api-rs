@@ -26,6 +26,7 @@ tokio-util = { version = "0.7.12", features = ["io"] }
 futures-util = "0.3.31"
 ordermap = "1.0.0"
 parking_lot = "0.12.5"
+reqwest-websocket = "0.5.1"
 
 [features]
 default = ["ftp", "cli"]

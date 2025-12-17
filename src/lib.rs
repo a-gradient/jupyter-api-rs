@@ -7,4 +7,4 @@ pub mod services;
 pub mod ftp;
 pub mod state;
 
-pub use services::fs;
+pub use services::{fs, terminal};

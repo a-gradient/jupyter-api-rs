@@ -2,6 +2,7 @@ use crate::api::{
   client::*, param::*, resp::*
 };
 use reqwest::{Method, Response};
+use reqwest_websocket::WebSocket;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
@@ -92,6 +93,8 @@ pub trait JupyterApi {
   async fn create_terminal(&self, name: Option<&str>) -> Result<Terminal, ClientError>;
 
   async fn get_terminal(&self, terminal_id: &str) -> Result<Terminal, ClientError>;
+
+  async fn connect_terminal(&self, terminal_id: &str) -> Result<WebSocket, ClientError>;
 
   async fn delete_terminal(&self, terminal_id: &str) -> Result<(), ClientError>;
 
@@ -379,6 +382,17 @@ impl JupyterApi for JupyterLabClient {
     ])?;
     let request = self.request(Method::GET, url);
     self.send_json(request).await
+  }
+
+  async fn connect_terminal(&self, terminal_id: &str) -> Result<WebSocket, ClientError> {
+    let url = self.build_url(&[
+      Segment::literal("terminals"),
+      Segment::literal("websocket"),
+      Segment::literal(terminal_id.to_string()),
+    ])?;
+    let request = self.request(Method::GET, url);
+    let resp = self.send_ws(request).await?;
+    resp.into_websocket().await.map_err(ClientError::Websocket)
   }
 
   async fn delete_terminal(&self, terminal_id: &str) -> Result<(), ClientError> {

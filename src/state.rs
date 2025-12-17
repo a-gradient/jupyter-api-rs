@@ -101,6 +101,27 @@ impl State {
     result.2?;
     Ok(())
   }
+
+  pub async fn create_terminal(&self, name: Option<&str>) -> Result<Terminal, ClientError> {
+    let terminal = self.client.create_terminal(name).await?;
+    self.terminals.insert(terminal.name.clone(), terminal.clone());
+    Ok(terminal)
+  }
+
+  pub async fn shutdown_terminal(&self, name: &str) -> Result<(), ClientError> {
+    self.client.delete_terminal(name).await?;
+    self.terminals.map.write().remove(name);
+    Ok(())
+  }
+
+  pub async fn get_terminal(&self, name: &str) -> Result<Terminal, ClientError> {
+    if let Some(terminal) = self.terminals.get(name) {
+      return Ok(terminal);
+    }
+    let terminal = self.client.get_terminal(name).await?;
+    self.terminals.insert(terminal.name.clone(), terminal.clone());
+    Ok(terminal)
+  }
 }
 
 #[cfg(test)]
