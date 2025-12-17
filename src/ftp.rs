@@ -1,7 +1,6 @@
 use std::{
   fmt,
   path::{Component, Path, PathBuf},
-  sync::Arc,
   time::SystemTime,
 };
 
@@ -15,7 +14,7 @@ use reqwest::StatusCode;
 use tokio::io::{AsyncRead, AsyncReadExt};
 
 use crate::{
-  api::client::RestError,
+  api::client::ClientError,
   fs::{Entry, EntryKind, FsError, FsService},
 };
 
@@ -23,17 +22,17 @@ use crate::{
 pub type FtpServerBuilder = ServerBuilder<FsStorage, DefaultUser>;
 
 /// Construct a libunftp [`ServerBuilder`] that serves files via the Jupyter Contents API.
-pub fn server_builder(fs: Arc<FsService>) -> FtpServerBuilder {
+pub fn server_builder(fs: FsService) -> FtpServerBuilder {
   ServerBuilder::new(Box::new(move || FsStorage::new(fs.clone())))
 }
 
 #[derive(Clone)]
 pub struct FsStorage {
-  fs: Arc<FsService>,
+  fs: FsService,
 }
 
 impl FsStorage {
-  pub fn new(fs: Arc<FsService>) -> Self {
+  pub fn new(fs: FsService) -> Self {
     Self { fs }
   }
 }
@@ -284,7 +283,7 @@ fn normalize_request_path<P: AsRef<Path>>(path: P) -> String {
 fn map_fs_error(err: FsError) -> Error {
   debug!(error = ?err, "FsService error surfaced to FTP client");
   match err {
-    FsError::Rest(rest) => map_rest_error(rest),
+    FsError::Client(e) => map_client_error(e),
     FsError::NotAFile(_) => Error::from(ErrorKind::PermanentFileNotAvailable),
     FsError::NotADirectory(_) => Error::from(ErrorKind::PermanentDirectoryNotAvailable),
     FsError::MissingContent(_) | FsError::InvalidPayload(_) => Error::new(ErrorKind::LocalError, err),
@@ -293,10 +292,10 @@ fn map_fs_error(err: FsError) -> Error {
   }
 }
 
-fn map_rest_error(err: RestError) -> Error {
-  trace!(error = ?err, "mapping REST error to FTP status");
+fn map_client_error(err: ClientError) -> Error {
+  trace!(error = ?err, "mapping Client error to FTP status");
   match err {
-    RestError::Api { status, .. } => match status {
+    ClientError::Api { status, .. } => match status {
       StatusCode::NOT_FOUND => Error::from(ErrorKind::PermanentFileNotAvailable),
       StatusCode::FORBIDDEN | StatusCode::UNAUTHORIZED => Error::from(ErrorKind::PermissionDenied),
       StatusCode::CONFLICT => Error::from(ErrorKind::PermanentDirectoryNotEmpty),

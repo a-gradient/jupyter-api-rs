@@ -1,9 +1,10 @@
-use std::{fs, path::PathBuf};
+use std::{fs, path::PathBuf, time::Duration};
 
 use anyhow::{Context, bail};
 use clap::{Parser, Subcommand};
+use jupyter_shell::api::client::JupyterLabClient;
 use reqwest::Url;
-use tracing::info;
+use tracing::{info, warn};
 
 #[cfg(feature = "ftp")]
 pub mod ftp;
@@ -34,6 +35,8 @@ pub struct TokenArgs {
   token: Option<String>,
   token_file: Option<PathBuf>,
   api_base_path: Option<String>,
+  http_timeout_secs: Option<u64>,
+  accept_invalid_certs: bool,
 }
 
 impl TokenArgs {
@@ -76,6 +79,27 @@ impl TokenArgs {
     }
 
     bail!("no API token supplied; use --token, --token-file, or append ?token=<value> to the URL");
+  }
+
+  pub fn build_client(&self) -> anyhow::Result<JupyterLabClient> {
+    let base_url = self.derive_base_url()?;
+    let token = self.resolve_token()?;
+
+    let mut builder = JupyterLabClient::builder(base_url.as_str())?;
+    if let Some(timeout_secs) = self.http_timeout_secs {
+      builder = builder.timeout(Duration::from_secs(timeout_secs));
+    }
+    builder = builder.user_agent(APP_USER_AGENT);
+
+    if self.accept_invalid_certs {
+      builder = builder.danger_accept_invalid_certs(true);
+      warn!("TLS certificate verification disabled for Jupyter endpoint");
+    }
+
+    builder = builder.token(&token)?;
+    builder
+      .build()
+      .context("failed to build Jupyter client")
   }
 }
 

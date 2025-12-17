@@ -2,20 +2,19 @@ use std::{
   io::ErrorKind,
   path::{Path, PathBuf},
   sync::Arc,
-  time::Duration,
 };
 
 use anyhow::{anyhow, bail, Context};
 use clap::{value_parser, ArgAction, Args, ValueHint};
 use jupyter_shell::{
-  api::client::{JupyterRestClient, RestError},
+  api::client::ClientError,
   fs::{Entry, FsError, FsService},
 };
 use reqwest::{StatusCode, Url};
 use tokio::fs;
 use tracing::{debug, info, warn};
 
-use crate::cli::{APP_USER_AGENT, DEFAULT_JUPYTER_URL, TokenArgs};
+use crate::cli::{DEFAULT_JUPYTER_URL, TokenArgs};
 
 #[derive(Args, Debug)]
 #[command(about = "Expose a Jupyter deployment over SCP")]
@@ -46,40 +45,24 @@ pub(crate) async fn run(args: ScpArgs) -> anyhow::Result<()> {
     token: args.token,
     token_file: args.token_file,
     api_base_path: args.api_base_path,
+    http_timeout_secs: args.http_timeout_secs,
+    accept_invalid_certs: args.accept_invalid_certs,
   };
 
   let base_url = token_args.derive_base_url()?;
-  let token = token_args.resolve_token()?;
+  let client = token_args.build_client()?;
 
-  let mut builder = JupyterRestClient::builder(base_url.as_str())?;
-  if let Some(timeout_secs) = args.http_timeout_secs {
-    builder = builder.timeout(Duration::from_secs(timeout_secs));
-  }
-  builder = builder.user_agent(APP_USER_AGENT);
-
-  if args.accept_invalid_certs {
-    builder = builder.danger_accept_invalid_certs(true);
-    warn!("TLS certificate verification disabled for Jupyter endpoint");
-  }
-
-  builder = builder.token(&token)?;
-  let rest = Arc::new(
-    builder
-      .build()
-      .context("failed to build Jupyter REST client")?,
-  );
-
-  let fs = Arc::new(FsService::new(rest));
+  let fs = FsService::new(Arc::new(client));
   let (source_ops, dest_op) = parse_operands(&args.paths)?;
   let plan = determine_transfer_plan(&base_url, source_ops, dest_op)?;
 
   info!(mode = plan.label(), source_count = plan.source_count(), recursive = args.recursive, "Starting SCP transfer");
   match plan {
     TransferPlan::Upload { sources, destination } => {
-      upload_paths(fs, &sources, &destination, args.recursive).await?;
+      upload_paths(&fs, &sources, &destination, args.recursive).await?;
     }
     TransferPlan::Download { sources, destination } => {
-      download_paths(fs, &sources, &destination, args.recursive).await?;
+      download_paths(&fs, &sources, &destination, args.recursive).await?;
     }
   }
   info!("SCP transfer completed");
@@ -286,7 +269,7 @@ fn ensure_host_alignment(base_url: &Url, remote: &RemoteOperand) -> anyhow::Resu
 }
 
 async fn upload_paths(
-  fs: Arc<FsService>,
+  fs: &FsService,
   sources: &[LocalOperand],
   dest: &RemoteOperand,
   recursive: bool,
@@ -295,7 +278,7 @@ async fn upload_paths(
     bail!("no local sources were provided");
   }
 
-  let dest_entry = fetch_remote_entry(fs.as_ref(), &dest.normalized).await?;
+  let dest_entry = fetch_remote_entry(fs, &dest.normalized).await?;
   let mut dest_is_dir = false;
   if let Some(entry) = &dest_entry {
     if entry.kind.is_directory() {
@@ -312,7 +295,7 @@ async fn upload_paths(
   }
 
   if dest_is_dir && dest_entry.is_none() {
-    ensure_remote_directory(fs.clone(), &dest.normalized).await?;
+    ensure_remote_directory(fs, &dest.normalized).await?;
   }
 
   for source in sources {
@@ -330,9 +313,9 @@ async fn upload_paths(
       if !recursive {
         bail!("{} is a directory (use --recursive to enable directory copies)", source.raw);
       }
-      upload_directory(fs.clone(), &source.path, &target_path).await?;
+      upload_directory(fs, &source.path, &target_path).await?;
     } else if metadata.is_file() {
-      upload_file(fs.clone(), &source.path, &target_path).await?;
+      upload_file(fs, &source.path, &target_path).await?;
     } else {
       bail!("{} is neither a file nor a directory", source.raw);
     }
@@ -342,7 +325,7 @@ async fn upload_paths(
 }
 
 async fn download_paths(
-  fs: Arc<FsService>,
+  fs: &FsService,
   sources: &[RemoteOperand],
   dest: &LocalOperand,
   recursive: bool,
@@ -378,7 +361,7 @@ async fn download_paths(
   }
 
   for remote in sources {
-    let entry = fetch_remote_entry(fs.as_ref(), &remote.normalized)
+    let entry = fetch_remote_entry(fs, &remote.normalized)
       .await?
       .ok_or_else(|| anyhow!("remote path '{}' does not exist", remote.raw))?;
     let mut target_path = dest.path.clone();
@@ -388,16 +371,16 @@ async fn download_paths(
     if entry.kind.is_directory() && !recursive {
       bail!("{} is a directory (use --recursive to enable directory copies)", remote.raw);
     }
-    download_entry(fs.clone(), entry, &remote.normalized, &target_path, recursive).await?;
+    download_entry(fs, entry, &remote.normalized, &target_path, recursive).await?;
   }
 
   Ok(())
 }
 
-async fn upload_directory(fs: Arc<FsService>, local_dir: &Path, remote_dir: &str) -> anyhow::Result<()> {
+async fn upload_directory(fs: &FsService, local_dir: &Path, remote_dir: &str) -> anyhow::Result<()> {
   let mut stack = vec![(local_dir.to_path_buf(), remote_dir.to_string())];
   while let Some((current_local, current_remote)) = stack.pop() {
-    ensure_remote_directory(fs.clone(), &current_remote).await?;
+    ensure_remote_directory(fs, &current_remote).await?;
     let mut entries = fs::read_dir(&current_local)
       .await
       .with_context(|| format!("failed to list directory {}", current_local.display()))?;
@@ -417,7 +400,7 @@ async fn upload_directory(fs: Arc<FsService>, local_dir: &Path, remote_dir: &str
       if metadata.is_dir() {
         stack.push((path, remote_child));
       } else if metadata.is_file() {
-        upload_file(fs.clone(), &path, &remote_child).await?;
+        upload_file(fs, &path, &remote_child).await?;
       } else {
         bail!("{} is neither a file nor a directory", path.display());
       }
@@ -426,7 +409,7 @@ async fn upload_directory(fs: Arc<FsService>, local_dir: &Path, remote_dir: &str
   Ok(())
 }
 
-async fn upload_file(fs: Arc<FsService>, local_path: &Path, remote_path: &str) -> anyhow::Result<()> {
+async fn upload_file(fs: &FsService, local_path: &Path, remote_path: &str) -> anyhow::Result<()> {
   let bytes = fs::read(local_path)
     .await
     .with_context(|| format!("failed to read {}", local_path.display()))?;
@@ -439,7 +422,7 @@ async fn upload_file(fs: Arc<FsService>, local_path: &Path, remote_path: &str) -
 }
 
 async fn download_entry(
-  fs: Arc<FsService>,
+  fs: &FsService,
   entry: Entry,
   remote_path: &str,
   local_path: &Path,
@@ -467,17 +450,17 @@ async fn download_entry(
         if child.kind.is_directory() {
           stack.push((child, child_remote, child_local));
         } else {
-          download_file(fs.clone(), &child_remote, &child_local).await?;
+          download_file(fs, &child_remote, &child_local).await?;
         }
       }
     } else {
-      download_file(fs.clone(), &current_remote, &current_local).await?;
+      download_file(fs, &current_remote, &current_local).await?;
     }
   }
   Ok(())
 }
 
-async fn download_file(fs: Arc<FsService>, remote_path: &str, local_path: &Path) -> anyhow::Result<()> {
+async fn download_file(fs: &FsService, remote_path: &str, local_path: &Path) -> anyhow::Result<()> {
   let file = fs
     .download(remote_path)
     .await
@@ -494,11 +477,11 @@ async fn download_file(fs: Arc<FsService>, remote_path: &str, local_path: &Path)
   Ok(())
 }
 
-async fn ensure_remote_directory(fs: Arc<FsService>, path: &str) -> anyhow::Result<()> {
+async fn ensure_remote_directory(fs: &FsService, path: &str) -> anyhow::Result<()> {
   if path == "/" {
     return Ok(());
   }
-  match fetch_remote_entry(fs.as_ref(), path).await? {
+  match fetch_remote_entry(fs, path).await? {
     Some(entry) => {
       if !entry.kind.is_directory() {
         bail!("remote path '{}' exists but is not a directory", path);
@@ -517,7 +500,7 @@ async fn ensure_remote_directory(fs: Arc<FsService>, path: &str) -> anyhow::Resu
 async fn fetch_remote_entry(fs: &FsService, path: &str) -> anyhow::Result<Option<Entry>> {
   match fs.metadata(path).await {
     Ok(entry) => Ok(Some(entry)),
-    Err(FsError::Rest(RestError::Api { status, .. })) if status == StatusCode::NOT_FOUND => Ok(None),
+    Err(FsError::Client(ClientError::Api { status, .. })) if status == StatusCode::NOT_FOUND => Ok(None),
     Err(err) => Err(err.into()),
   }
 }

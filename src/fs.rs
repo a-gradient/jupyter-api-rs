@@ -10,17 +10,18 @@ use tokio_util::io::StreamReader;
 use futures_util::TryStreamExt;
 
 use crate::api::{
-  client::{JupyterRestClient, RestError}, jupyter::{JupyterApi, JupyterLabApi}, param::{ContentsEntryType, ContentsFormat, ContentsGetParams, RenameContentsModel, SaveContentsModel}, resp::{ContentValue, Contents}
+  client::{JupyterLabClient, ClientError}, jupyter::{JupyterApi, JupyterLabApi}, param::{ContentsEntryType, ContentsFormat, ContentsGetParams, RenameContentsModel, SaveContentsModel}, resp::{ContentValue, Contents}
 };
 
 /// High-level convenience helpers for interacting with the Jupyter contents API
 /// using file system-like verbs.
+#[derive(Clone)]
 pub struct FsService {
-  inner: Arc<JupyterRestClient>,
+  inner: Arc<JupyterLabClient>,
 }
 
 impl FsService {
-  pub fn new(inner: Arc<JupyterRestClient>) -> Self {
+  pub fn new(inner: Arc<JupyterLabClient>) -> Self {
     Self { inner }
   }
 
@@ -463,7 +464,7 @@ fn trim_leading_slash(path: &str) -> &str {
 
 #[derive(Debug)]
 pub enum FsError {
-  Rest(RestError),
+  Client(ClientError),
   NotAFile(String),
   NotADirectory(String),
   MissingContent(String),
@@ -475,7 +476,7 @@ pub enum FsError {
 impl fmt::Display for FsError {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match self {
-      FsError::Rest(err) => write!(f, "rest api error: {err}"),
+      FsError::Client(err) => write!(f, "client api error: {err}"),
       FsError::NotAFile(path) => write!(f, "{path} is not a file"),
       FsError::NotADirectory(path) => write!(f, "{path} is not a directory"),
       FsError::MissingContent(path) => write!(f, "no content returned for {path}"),
@@ -489,16 +490,16 @@ impl fmt::Display for FsError {
 impl std::error::Error for FsError {
   fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
     match self {
-      FsError::Rest(err) => Some(err),
+      FsError::Client(err) => Some(err),
       FsError::Decode(err) => Some(err),
       _ => None,
     }
   }
 }
 
-impl From<RestError> for FsError {
-  fn from(value: RestError) -> Self {
-    FsError::Rest(value)
+impl From<ClientError> for FsError {
+  fn from(value: ClientError) -> Self {
+    FsError::Client(value)
   }
 }
 

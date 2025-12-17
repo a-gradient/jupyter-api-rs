@@ -7,14 +7,14 @@ use serde::{Deserialize, Serialize};
 use std::{fmt, time::Duration};
 
 #[derive(Debug)]
-pub struct JupyterRestClient {
+pub struct JupyterLabClient {
   client: Client,
   base_url: Url,
   auth_header: Option<HeaderValue>,
 }
 
 #[derive(Debug)]
-pub struct RestClientBuilder {
+pub struct JupyterLabClientBuilder {
   base_url: Url,
   client_builder: ClientBuilder,
   auth_header: Option<HeaderValue>,
@@ -26,57 +26,57 @@ pub struct ServerVersion {
 }
 
 #[derive(Debug)]
-pub enum RestError {
+pub enum ClientError {
   InvalidBaseUrl(String),
   Http(reqwest::Error),
   Api { status: StatusCode, message: String },
   InvalidHeader(String),
 }
 
-impl fmt::Display for RestError {
+impl fmt::Display for ClientError {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match self {
-      RestError::InvalidBaseUrl(msg) => write!(f, "invalid base url: {msg}"),
-      RestError::Http(err) => write!(f, "http error: {err}"),
-      RestError::Api { status, message } => {
+      ClientError::InvalidBaseUrl(msg) => write!(f, "invalid base url: {msg}"),
+      ClientError::Http(err) => write!(f, "http error: {err}"),
+      ClientError::Api { status, message } => {
         if message.is_empty() {
           write!(f, "api error: {status}")
         } else {
           write!(f, "api error: {status} - {message}")
         }
       }
-      RestError::InvalidHeader(msg) => write!(f, "invalid auth header: {msg}"),
+      ClientError::InvalidHeader(msg) => write!(f, "invalid auth header: {msg}"),
     }
   }
 }
 
-impl std::error::Error for RestError {}
+impl std::error::Error for ClientError {}
 
-impl From<reqwest::Error> for RestError {
+impl From<reqwest::Error> for ClientError {
   fn from(value: reqwest::Error) -> Self {
-    RestError::Http(value)
+    ClientError::Http(value)
   }
 }
 
-impl JupyterRestClient {
-  pub fn new(base_url: impl AsRef<str>) -> Result<Self, RestError> {
+impl JupyterLabClient {
+  pub fn new(base_url: impl AsRef<str>) -> Result<Self, ClientError> {
     Self::from_client(base_url, Client::new(), None)
   }
 
-  pub fn with_token(base_url: impl AsRef<str>, token: impl AsRef<str>) -> Result<Self, RestError> {
+  pub fn with_token(base_url: impl AsRef<str>, token: impl AsRef<str>) -> Result<Self, ClientError> {
     let header = build_token_header(token.as_ref())?;
     Self::from_client(base_url, Client::new(), Some(header))
   }
 
-  pub fn builder(base_url: impl AsRef<str>) -> Result<RestClientBuilder, RestError> {
-    RestClientBuilder::new(base_url)
+  pub fn builder(base_url: impl AsRef<str>) -> Result<JupyterLabClientBuilder, ClientError> {
+    JupyterLabClientBuilder::new(base_url)
   }
 
   pub fn from_client(
     base_url: impl AsRef<str>,
     client: Client,
     auth_header: Option<HeaderValue>,
-  ) -> Result<Self, RestError> {
+  ) -> Result<Self, ClientError> {
     let base_url = parse_base_url(base_url.as_ref())?;
     Ok(Self {
       client,
@@ -101,36 +101,36 @@ impl JupyterRestClient {
     }
   }
 
-  pub(super) async fn send_json<T>(&self, request: RequestBuilder) -> Result<T, RestError>
+  pub(super) async fn send_json<T>(&self, request: RequestBuilder) -> Result<T, ClientError>
   where
     T: DeserializeOwned,
   {
     let response = self.send(request).await?;
-    response.json::<T>().await.map_err(RestError::Http)
+    response.json::<T>().await.map_err(ClientError::Http)
   }
 
-  pub(super) async fn send_empty(&self, request: RequestBuilder) -> Result<(), RestError> {
+  pub(super) async fn send_empty(&self, request: RequestBuilder) -> Result<(), ClientError> {
     self.send(request).await?;
     Ok(())
   }
 
-  pub(super) async fn send(&self, request: RequestBuilder) -> Result<Response, RestError> {
-    let response = request.send().await.map_err(RestError::Http)?;
+  pub(super) async fn send(&self, request: RequestBuilder) -> Result<Response, ClientError> {
+    let response = request.send().await.map_err(ClientError::Http)?;
     if response.status().is_success() {
       Ok(response)
     } else {
       let status = response.status();
       let message = response.text().await.unwrap_or_default();
-      Err(RestError::Api { status, message })
+      Err(ClientError::Api { status, message })
     }
   }
 
-  pub(super) fn build_url(&self, segments: &[Segment]) -> Result<Url, RestError> {
+  pub(super) fn build_url(&self, segments: &[Segment]) -> Result<Url, ClientError> {
     let mut url = self.base_url.clone();
     {
       let mut parts = url
         .path_segments_mut()
-        .map_err(|_| RestError::InvalidBaseUrl("supplied base url cannot be a base".into()))?;
+        .map_err(|_| ClientError::InvalidBaseUrl("supplied base url cannot be a base".into()))?;
       parts.pop_if_empty();
       for segment in segments {
         match segment {
@@ -162,8 +162,8 @@ impl JupyterRestClient {
   }
 }
 
-impl RestClientBuilder {
-  pub fn new(base_url: impl AsRef<str>) -> Result<Self, RestError> {
+impl JupyterLabClientBuilder {
+  pub fn new(base_url: impl AsRef<str>) -> Result<Self, ClientError> {
     let base_url = parse_base_url(base_url.as_ref())?;
     Ok(Self {
       base_url,
@@ -192,15 +192,15 @@ impl RestClientBuilder {
     self
   }
 
-  pub fn auto_token(mut self, token: impl AsRef<str>) -> Result<Self, RestError> {
+  pub fn auto_token(mut self, token: impl AsRef<str>) -> Result<Self, ClientError> {
     let value = build_token_header(token.as_ref()).map_err(|err| {
-      RestError::InvalidHeader(err.to_string())
+      ClientError::InvalidHeader(err.to_string())
     })?;
     self.auth_header = Some(value);
     Ok(self)
   }
 
-  pub fn token(mut self, token: impl AsRef<str>) -> Result<Self, RestError> {
+  pub fn token(mut self, token: impl AsRef<str>) -> Result<Self, ClientError> {
     let header = build_token_header(token.as_ref())?;
     self.auth_header = Some(header);
     Ok(self)
@@ -211,9 +211,9 @@ impl RestClientBuilder {
     self
   }
 
-  pub fn build(self) -> Result<JupyterRestClient, RestError> {
-    let client = self.client_builder.build().map_err(RestError::Http)?;
-    Ok(JupyterRestClient {
+  pub fn build(self) -> Result<JupyterLabClient, ClientError> {
+    let client = self.client_builder.build().map_err(ClientError::Http)?;
+    Ok(JupyterLabClient {
       client,
       base_url: self.base_url,
       auth_header: self.auth_header,
@@ -221,13 +221,13 @@ impl RestClientBuilder {
   }
 }
 
-fn parse_base_url(raw: &str) -> Result<Url, RestError> {
-  Url::parse(raw).map_err(|err| RestError::InvalidBaseUrl(err.to_string()))
+fn parse_base_url(raw: &str) -> Result<Url, ClientError> {
+  Url::parse(raw).map_err(|err| ClientError::InvalidBaseUrl(err.to_string()))
 }
 
-fn build_token_header(token: &str) -> Result<HeaderValue, RestError> {
+fn build_token_header(token: &str) -> Result<HeaderValue, ClientError> {
   let value = format!("token {}", token);
-  HeaderValue::from_str(&value).map_err(|err| RestError::InvalidHeader(err.to_string()))
+  HeaderValue::from_str(&value).map_err(|err| ClientError::InvalidHeader(err.to_string()))
 }
 
 #[derive(Debug, Clone)]
@@ -263,18 +263,18 @@ impl Segment {
 pub(crate) mod tests {
   use super::*;
 
-  pub(crate) fn _setup_client() -> JupyterRestClient {
-    RestClientBuilder::new("http://localhost:8888").unwrap()
+  pub(crate) fn _setup_client() -> JupyterLabClient {
+    JupyterLabClientBuilder::new("http://localhost:8888").unwrap()
       .auto_token(include_str!("../../.secret").trim()).unwrap()
       .build().unwrap()
   }
 
   #[test]
   fn test_builder() {
-    let builder = RestClientBuilder::new("http://localhost:8888").unwrap();
+    let builder = JupyterLabClientBuilder::new("http://localhost:8888").unwrap();
     let client = builder
       .timeout(Duration::from_secs(10))
-      .user_agent("jupyter-rest-client/0.1")
+      .user_agent("jupyter-api-rs/0.1")
       .auto_token(include_str!("../../.secret").trim()).unwrap()
       .build()
       .unwrap();

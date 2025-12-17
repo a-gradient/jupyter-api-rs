@@ -2,16 +2,14 @@ use std::{
   net::SocketAddr,
   path::PathBuf,
   sync::Arc,
-  time::Duration,
 };
 
-use anyhow::Context;
 use clap::{value_parser, ArgAction, Args, ValueHint};
-use jupyter_shell::{api::client::JupyterRestClient, fs::FsService, ftp};
+use jupyter_shell::{fs::FsService, ftp};
 use reqwest::Url;
-use tracing::{info, warn};
+use tracing::info;
 
-use crate::cli::{APP_USER_AGENT, DEFAULT_JUPYTER_URL, TokenArgs};
+use crate::cli::{DEFAULT_JUPYTER_URL, TokenArgs};
 
 const FTP_BIND_ADDR: &str = "0.0.0.0:8021";
 
@@ -21,30 +19,14 @@ pub(crate) async fn run(args: FtpArgs) -> anyhow::Result<()> {
     token: args.token,
     token_file: args.token_file,
     api_base_path: args.api_base_path,
+    http_timeout_secs: args.http_timeout_secs,
+    accept_invalid_certs: args.accept_invalid_certs,
   };
   let base_url = token_args.derive_base_url()?;
-  let token = token_args.resolve_token()?;
 
-  let mut builder = JupyterRestClient::builder(base_url.as_str())?;
-  if let Some(timeout_secs) = args.http_timeout_secs {
-    builder = builder.timeout(Duration::from_secs(timeout_secs));
-  }
-  builder = builder.user_agent(APP_USER_AGENT);
+  let client = token_args.build_client()?;
 
-  if args.accept_invalid_certs {
-    builder = builder.danger_accept_invalid_certs(true);
-    warn!("TLS certificate verification disabled for Jupyter endpoint");
-  }
-
-  builder = builder.token(&token)?;
-
-  let rest = Arc::new(
-    builder
-      .build()
-      .context("failed to build Jupyter REST client")?,
-  );
-
-  let fs = Arc::new(FsService::new(rest));
+  let fs = FsService::new(Arc::new(client));
   let server = ftp::server_builder(fs).build()?;
 
   let bind = if let Some(port) = args.bind_port {
