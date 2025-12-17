@@ -22,6 +22,7 @@ async fn main() -> anyhow::Result<()> {
   let cli = cli::Cli::parse();
 
   match cli.command {
+    #[cfg(feature = "ftp")]
     cli::Command::Ftp(args) => {
       cli::ftp::run(args)
         .await

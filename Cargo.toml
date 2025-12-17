@@ -3,6 +3,10 @@ name = "jupyter_shell"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "jupyter_shell"
+required-features = ["cli"]
+
 [dependencies]
 chrono = { version = "0.4.42", features = ["serde"] }
 reqwest = { version = "0.12.26", features = ["json", "stream"] }
@@ -13,10 +17,15 @@ base64 = "0.21.7"
 sha2 = "0.10.8"
 uuid = { version = "1.19.0", features = ["serde"] }
 async-trait = "0.1.89"
-libunftp = "0.21.0"
-clap = { version = "4.5.53", features = ["derive", "env"] }
-anyhow = "1.0.100"
+libunftp = { version = "0.21.0", optional = true }
+clap = { version = "4.5.53", features = ["derive", "env"], optional = true }
+anyhow = { version = "1.0.100", optional = true }
 tracing = "0.1.43"
-tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"], optional = true }
 tokio-util = { version = "0.7.12", features = ["io"] }
 futures-util = "0.3.31"
+
+[features]
+default = ["ftp", "cli"]
+ftp = ["dep:libunftp"]
+cli = ["dep:clap", "dep:anyhow", "dep:tracing-subscriber"]

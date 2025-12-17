@@ -5,6 +5,7 @@ use clap::{Parser, Subcommand};
 use reqwest::Url;
 use tracing::info;
 
+#[cfg(feature = "ftp")]
 pub mod ftp;
 pub mod scp;
 
@@ -20,6 +21,7 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
+  #[cfg(feature = "ftp")]
   #[command(about = "Expose a Jupyter deployment over FTP")]
   Ftp(ftp::FtpArgs),
   #[command(about = "Expose a Jupyter deployment over SCP")]
