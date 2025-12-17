@@ -109,7 +109,7 @@ pub(crate) async fn run(args: SshArgs) -> anyhow::Result<()> {
   let mut ws_closed = false;
 
   loop {
-    if stdin_closed && ws_closed {
+    if stdin_closed || ws_closed {
       break;
     }
 
@@ -162,11 +162,13 @@ pub(crate) async fn run(args: SshArgs) -> anyhow::Result<()> {
       }
     }
   }
+  stdin_task.abort();
   drop(_raw_guard);
+  info!("SSH session ended since {}", if ws_closed { "the server closed the connection" } else { "stdin was closed" });
 
-  if let Err(err) = stdin_task.await {
-    warn!(error = %err, "stdin reader task failed");
-  }
+  // if let Err(err) = stdin_task.await {
+  //   warn!(error = %err, "stdin reader task failed");
+  // }
 
   if created_terminal && !args.keep_terminal {
     client
