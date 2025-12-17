@@ -1,4 +1,6 @@
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{
+  SinkExt, Stream, StreamExt, stream::{SplitSink, SplitStream}
+};
 use reqwest_websocket::Message;
 use serde_json::json;
 
@@ -9,6 +11,59 @@ pub struct TerminalService {
   pub name: String,
   pub ws: reqwest_websocket::WebSocket,
   pub buffer: Vec<String>,
+}
+
+pub struct TerminalSplit {
+  pub client: JupyterLabClient,
+  pub name: String,
+  pub sink: TerminalInputSink,
+  pub stream: TerminalOutputStream,
+}
+
+pub struct TerminalInputSink {
+  pub sink: SplitSink<reqwest_websocket::WebSocket, Message>,
+}
+
+impl TerminalInputSink {
+  pub async fn send_message(&mut self, input: InputMessage) -> Result<(), TerminalError> {
+    let msg_value = serde_json::Value::try_from(input).map_err(TerminalError::Json)?;
+    let msg_text = serde_json::to_string(&msg_value).map_err(TerminalError::Json)?;
+    self.sink
+      .send(Message::Text(msg_text))
+      .await
+      .map_err(TerminalError::WebSocket)
+  }
+}
+
+pub struct TerminalOutputStream {
+  pub stream: SplitStream<reqwest_websocket::WebSocket>,
+}
+
+impl Stream for TerminalOutputStream {
+  type Item = Result<OutputMessage, TerminalError>;
+
+  fn poll_next(
+    mut self: std::pin::Pin<&mut Self>,
+    cx: &mut std::task::Context<'_>,
+  ) -> std::task::Poll<Option<Self::Item>> {
+    match futures_util::ready!(self.stream.poll_next_unpin(cx)) {
+      Some(Ok(Message::Text(text))) => {
+        let msg_value: serde_json::Value =
+          match serde_json::from_str(&text).map_err(TerminalError::Json) {
+            Ok(v) => v,
+            Err(e) => return std::task::Poll::Ready(Some(Err(e))),
+          };
+        let output_msg = match OutputMessage::try_from(msg_value).map_err(TerminalError::Json) {
+          Ok(msg) => msg,
+          Err(e) => return std::task::Poll::Ready(Some(Err(e))),
+        };
+        std::task::Poll::Ready(Some(Ok(output_msg)))
+      },
+      Some(Ok(_)) => std::task::Poll::Ready(None),
+      Some(Err(e)) => std::task::Poll::Ready(Some(Err(TerminalError::WebSocket(e)))),
+      None => std::task::Poll::Ready(None),
+    }
+  }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -44,6 +99,8 @@ pub enum OutputMessage {
   Init {},
   /// stdout,$0
   Stdout(String),
+  /// disconnect,$0
+  Disconnect(i32),
 }
 
 impl TryFrom<serde_json::Value> for OutputMessage {
@@ -58,7 +115,14 @@ impl TryFrom<serde_json::Value> for OutputMessage {
         Ok(OutputMessage::Stdout(data))
       }
       Some("setup") => Ok(OutputMessage::Init {}),
-      _ => Err(serde_json::Error::custom("unknown message type")),
+      Some("disconnect") => {
+        let code = arr.get(1).and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+        Ok(OutputMessage::Disconnect(code))
+      }
+      _ => {
+        warn!("unknown terminal message: {:?}", value);
+        Err(serde_json::Error::custom("unknown message type"))
+      },
     }
   }
 }
@@ -97,6 +161,17 @@ impl TerminalService {
       Some(Ok(_)) => Ok(None),
       Some(Err(e)) => Err(TerminalError::WebSocket(e)),
       None => Ok(None),
+    }
+  }
+
+  pub fn split(self) -> TerminalSplit {
+    let TerminalService { client, name, ws, .. } = self;
+    let (sink, stream) = ws.split();
+    TerminalSplit {
+      client,
+      name,
+      sink: TerminalInputSink { sink },
+      stream: TerminalOutputStream { stream },
     }
   }
 }

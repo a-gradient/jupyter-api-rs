@@ -3,14 +3,12 @@ use std::{io::IsTerminal, path::PathBuf};
 use anyhow::{anyhow, Context};
 use clap::{value_parser, ArgAction, Args, ValueHint};
 use crossterm::terminal;
-use futures_util::{SinkExt, StreamExt};
+use futures_util::StreamExt;
 use jupyter_shell::{
   api::jupyter::JupyterApi,
-  services::terminal::{InputMessage, OutputMessage, TerminalError, TerminalService},
+  services::terminal::{InputMessage, OutputMessage, TerminalError, TerminalService, TerminalSplit},
 };
 use reqwest::Url;
-use reqwest_websocket::{CloseCode, Message};
-use serde_json;
 use tokio::{
   io::{AsyncReadExt, AsyncWriteExt},
   sync::mpsc,
@@ -85,16 +83,15 @@ pub(crate) async fn run(args: SshArgs) -> anyhow::Result<()> {
   let service = TerminalService::connect(client, &terminal_name)
     .await
     .with_context(|| format!("failed to connect to terminal {terminal_name}"))?;
-  let TerminalService {
+  let TerminalSplit {
     client,
     name,
-    ws,
-    ..
-  } = service;
-  let (mut ws_tx, mut ws_rx) = ws.split();
+    mut sink,
+    mut stream,
+  } = service.split();
 
   if let Some((cols, rows)) = current_terminal_size() {
-    send_resize(&mut ws_tx, cols, rows)
+    sink.send_message(InputMessage::Resize { cols, rows })
       .await
       .map_err(to_anyhow)?;
   }
@@ -119,36 +116,23 @@ pub(crate) async fn run(args: SshArgs) -> anyhow::Result<()> {
     tokio::select! {
       biased;
 
-      ws_msg = ws_rx.next(), if !ws_closed => {
-        match ws_msg {
-          Some(Ok(Message::Text(text))) => {
-            match decode_output(&text) {
-              Ok(OutputMessage::Stdout(data)) => {
-                stdout.write_all(data.as_bytes()).await?;
-                stdout.flush().await?;
-              }
-              Ok(OutputMessage::Init {}) => {
-                debug!("terminal websocket initialized");
-              }
-              Err(err) => warn!(error = ?err, "failed to decode terminal output"),
-            }
+      msg = stream.next(), if !ws_closed => {
+        match msg {
+          Some(Ok(OutputMessage::Stdout(data))) => {
+            stdout.write_all(data.as_bytes()).await.with_context(|| "failed to write to stdout")?;
+            stdout.flush().await.with_context(|| "failed to flush stdout")?;
           }
-          Some(Ok(Message::Binary(bytes))) => {
-            stdout.write_all(&bytes).await?;
-            stdout.flush().await?;
-          }
-          Some(Ok(Message::Ping(payload))) => {
-            ws_tx.send(Message::Pong(payload)).await.ok();
-          }
-          Some(Ok(Message::Close { .. })) | None => {
-            debug!("terminal websocket closed by server");
-            ws_closed = true;
+          Some(Ok(OutputMessage::Init {})) => {
+            // Ignore init messages
           }
           Some(Err(err)) => {
             ws_closed = true;
-            warn!(error = %err, "terminal websocket errored");
+            warn!(error = %err, "WebSocket error received from terminal");
           }
-          Some(Ok(_)) => {}
+          Some(Ok(OutputMessage::Disconnect(_))) | None => {
+            ws_closed = true;
+            debug!("WebSocket stream closed by server");
+          }
         }
       }
 
@@ -158,26 +142,27 @@ pub(crate) async fn run(args: SshArgs) -> anyhow::Result<()> {
             if chunk.is_empty() {
               continue;
             }
-            send_stdin(&mut ws_tx, &chunk)
+            sink.send_message(InputMessage::Stdin(String::from_utf8_lossy(&chunk).into_owned()))
               .await
-              .map_err(to_anyhow)?;
+              .with_context(|| "failed to send stdin data to terminal")?;
           }
           None => {
             stdin_closed = true;
-            let _ = ws_tx.send(Message::Close { code: CloseCode::Normal, reason: "close".to_string() }).await;
+            let _ = sink.send_message(InputMessage::Stdin("\u{0004}".to_string())).await;
           }
         }
       }
 
       maybe_resize = recv_resize(&mut resize_rx) => {
         if let Some((cols, rows)) = maybe_resize {
-          send_resize(&mut ws_tx, cols, rows)
+          sink.send_message(InputMessage::Resize { cols, rows })
             .await
-            .map_err(to_anyhow)?;
+            .with_context(|| "failed to send resize message to terminal")?;
         }
       }
     }
   }
+  drop(_raw_guard);
 
   if let Err(err) = stdin_task.await {
     warn!(error = %err, "stdin reader task failed");
@@ -215,39 +200,6 @@ async fn read_stdin(tx: mpsc::Sender<Vec<u8>>) {
 
 fn to_anyhow(err: TerminalError) -> anyhow::Error {
   anyhow!("terminal error: {err:?}")
-}
-
-async fn send_stdin(
-  ws_tx: &mut futures_util::stream::SplitSink<reqwest_websocket::WebSocket, Message>,
-  chunk: &[u8],
-) -> Result<(), TerminalError> {
-  let payload = String::from_utf8_lossy(chunk).into_owned();
-  send_message(ws_tx, InputMessage::Stdin(payload)).await
-}
-
-async fn send_resize(
-  ws_tx: &mut futures_util::stream::SplitSink<reqwest_websocket::WebSocket, Message>,
-  cols: u16,
-  rows: u16,
-) -> Result<(), TerminalError> {
-  send_message(ws_tx, InputMessage::Resize { cols, rows }).await
-}
-
-async fn send_message(
-  ws_tx: &mut futures_util::stream::SplitSink<reqwest_websocket::WebSocket, Message>,
-  input: InputMessage,
-) -> Result<(), TerminalError> {
-  let msg_value = serde_json::Value::try_from(input).map_err(TerminalError::Json)?;
-  let text = serde_json::to_string(&msg_value).map_err(TerminalError::Json)?;
-  ws_tx
-    .send(Message::Text(text))
-    .await
-    .map_err(TerminalError::WebSocket)
-}
-
-fn decode_output(text: &str) -> Result<OutputMessage, TerminalError> {
-  let value: serde_json::Value = serde_json::from_str(text).map_err(TerminalError::Json)?;
-  OutputMessage::try_from(value).map_err(TerminalError::Json)
 }
 
 fn current_terminal_size() -> Option<(u16, u16)> {
