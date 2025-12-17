@@ -365,6 +365,14 @@ impl JupyterApi for JupyterLabClient {
   }
 
   async fn create_terminal(&self, name: Option<&str>) -> Result<Terminal, ClientError> {
+    if let Some(n) = name {
+      if n.is_empty() {
+        return Err(ClientError::InvalidInput("terminal name cannot be empty".to_string()));
+      } else if !n.as_bytes().iter().all(|c| c.is_ascii_alphanumeric() || *c == b'_' ) {
+        // '-' is not allowed in terminal names
+        return Err(ClientError::InvalidInput("terminal name contains invalid characters".to_string()));
+      }
+    }
     let url = self.build_url(&[Segment::literal("api"), Segment::literal("terminals")])?;
     let payload = match name {
       Some(value) => json!({ "name": value }),
@@ -566,5 +574,18 @@ mod tests {
     let text2 = String::from_utf8_lossy(&data2);
     println!("Downloaded hello.txt (1-2): {}", text2);
     assert_eq!(&data[1..2], &data2);
+  }
+
+  #[tokio::test]
+  async fn test_terminal() {
+    let client = _setup_client();
+    let name = "1testaaaZ_1";
+    let terminal = client.create_terminal(Some(name)).await.unwrap();
+    assert!(terminal.name == name);
+    let terminal_fetched = client.get_terminal(name).await.unwrap();
+    assert!(terminal_fetched.name == name);
+    let socket = client.connect_terminal(name).await.unwrap();
+    client.delete_terminal(name).await.unwrap();
+    drop(socket);
   }
 }

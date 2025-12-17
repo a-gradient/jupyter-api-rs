@@ -29,6 +29,7 @@ pub struct ServerVersion {
 #[derive(Debug)]
 pub enum ClientError {
   InvalidBaseUrl(String),
+  InvalidInput(String),
   Http(reqwest::Error),
   Websocket(reqwest_websocket::Error),
   Api { status: StatusCode, message: String },
@@ -39,6 +40,7 @@ impl fmt::Display for ClientError {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match self {
       ClientError::InvalidBaseUrl(msg) => write!(f, "invalid base url: {msg}"),
+      ClientError::InvalidInput(msg) => write!(f, "invalid input: {msg}"),
       ClientError::Http(err) => write!(f, "http error: {err}"),
       ClientError::Websocket(err) => write!(f, "websocket error: {err}"),
       ClientError::Api { status, message } => {
@@ -283,9 +285,7 @@ impl Segment {
 
 #[cfg(test)]
 pub(crate) mod tests {
-  use crate::api::jupyter::JupyterApi;
-
-use super::*;
+  use super::*;
 
   pub(crate) fn _setup_client() -> JupyterLabClient {
     JupyterLabClientBuilder::new("http://localhost:8888").unwrap()
@@ -303,15 +303,5 @@ use super::*;
       .build()
       .unwrap();
     assert_eq!(client.base_url().as_str(), "http://localhost:8888/");
-  }
-
-  #[tokio::test]
-  async fn test_terminal() {
-    let client = _setup_client();
-    let terminal = client.create_terminal(Some("test")).await.unwrap();
-    assert!(terminal.name == "test");
-    let socket = client.connect_terminal("test").await.unwrap();
-    client.delete_terminal("test").await.unwrap();
-    drop(socket);
   }
 }
