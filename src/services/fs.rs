@@ -5,7 +5,7 @@ use std::task::{Context, Poll};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
-use tokio::io::{AsyncRead, ReadBuf};
+use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
 use tokio_util::io::StreamReader;
 use futures_util::TryStreamExt;
 
@@ -240,13 +240,77 @@ impl FsService {
     }
   }
 
-  /// Compute the SHA-256 hash for a file by downloading its bytes first.
+  /// Fetch the server-provided hash for a file (without downloading content).
+  ///
+  /// Note: Jupyter decides which algorithm to return (via `hash_algorithm`).
+  #[tracing::instrument(skip(self), fields(path = %path))]
+  pub async fn remote_hashsum(&self, path: &str) -> Result<(String, String), FsError> {
+    trace!("fetching remote hash via contents API");
+    let mut params = ContentsGetParams::default();
+    params.content = Some(false);
+    params.hash = Some(true);
+
+    let contents = self
+      .inner
+      .get_contents(path, Some(&params))
+      .await
+      .map_err(FsError::from)?;
+
+    let kind = EntryKind::from_content_type(&contents.content_type);
+    if !kind.is_file_like() {
+      return Err(FsError::NotAFile(contents.path));
+    }
+
+    let digest = contents.hash.ok_or_else(|| {
+      FsError::InvalidPayload(format!(
+        "server did not return hash for {}",
+        contents.path
+      ))
+    })?;
+
+    let algorithm = contents.hash_algorithm.ok_or_else(|| {
+      FsError::InvalidPayload(format!(
+        "server did not return hash_algorithm for {}",
+        contents.path
+      ))
+    })?;
+
+    Ok((algorithm, digest))
+  }
+
+  /// Compute the SHA-256 hash for a file.
+  ///
+  /// Prefers a server-provided SHA-256 from `GET /api/contents` (hash=true).
+  /// Falls back to streaming the file and computing SHA-256 locally.
   #[tracing::instrument(skip(self), fields(path = %path))]
   pub async fn sha256sum(&self, path: &str) -> Result<String, FsError> {
-    trace!("downloading file to compute hash");
-    let file = self.download(path).await?;
+    match self.remote_hashsum(path).await {
+      Ok((algorithm, digest)) if algorithm.eq_ignore_ascii_case("sha256") => {
+        trace!("using server-provided sha256");
+        return Ok(digest);
+      }
+      Ok((algorithm, _)) => {
+        trace!(hash_algorithm = %algorithm, "server returned non-sha256 hash; computing local sha256");
+      }
+      Err(err) => {
+        trace!(error = ?err, "server hash unavailable; computing local sha256");
+      }
+    }
+
+    let mut download = self.download_reader(path).await?;
     let mut hasher = Sha256::new();
-    hasher.update(&file.bytes);
+    let mut buf = [0u8; 16 * 1024];
+    loop {
+      let read = download
+        .reader
+        .read(&mut buf)
+        .await
+        .map_err(|err| FsError::InvalidPayload(format!("failed to read {}: {}", path, err)))?;
+      if read == 0 {
+        break;
+      }
+      hasher.update(&buf[..read]);
+    }
     let digest = format!("{:x}", hasher.finalize());
     trace!("completed sha256 hash");
     Ok(digest)
